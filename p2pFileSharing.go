@@ -1,17 +1,16 @@
 package main
 
 import (
-	"Lab1/peer"
-	"Lab1/tracker"
 	"fmt"
 	"log"
 	"os"
 
+	"Lab1/peer"
+	"Lab1/tracker"
 	"Lab1/util"
 
 	"github.com/urfave/cli/v2"
 )
-
 
 func main() {
 	app := cli.App{

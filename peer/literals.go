@@ -1,9 +1,10 @@
 package peer
 
 import (
-	"Lab1/util"
 	"fmt"
 	"strings"
+
+	"Lab1/util"
 )
 
 const (
@@ -14,10 +15,11 @@ const (
 	help                = "help"
 	unrecognizedCommand = "Unrecognized command"
 	badArguments        = "Bad arguments"
+	badIpPortArgument   = "Bad ip:port argument"
 )
 
 var helpMessage = strings.Join([]string{
-	fmt.Sprintf("\t%s [ip:port] [filepaths seperated by space]", register),
+	fmt.Sprintf("\t%s [ip:port of tracker] [ip:port of yourself] [filepaths seperated by space]", register),
 	fmt.Sprintf("\t%s", list),
 	fmt.Sprintf("\t%s [filename]", find),
 	fmt.Sprintf("\t%s [filename]", download),
