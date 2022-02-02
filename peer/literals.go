@@ -8,14 +8,16 @@ import (
 )
 
 const (
-	register            = "register"
-	list                = "list"
-	find                = "find"
-	download            = "download"
-	help                = "help"
-	unrecognizedCommand = "Unrecognized command"
+	register = "register"
+	list     = "list"
+	find     = "find"
+	download = "download"
+	help     = "help"
+
 	badArguments        = "Bad arguments"
 	badIpPortArgument   = "Bad ip:port argument"
+	badTrackerResponse  = "Bad tracker response"
+	unrecognizedCommand = "Unrecognized command"
 )
 
 var helpMessage = strings.Join([]string{
