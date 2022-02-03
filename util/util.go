@@ -3,7 +3,9 @@ package util
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
+	"log"
 	"os"
 )
 
@@ -31,4 +33,9 @@ func HashFileSHA256(f *os.File) (string, error) {
 	}
 
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func PrettyLogStruct(logger *log.Logger, v interface{}) {
+	prettyString, _ := json.MarshalIndent(v, "", "\t")
+	logger.Printf("%s", prettyString)
 }

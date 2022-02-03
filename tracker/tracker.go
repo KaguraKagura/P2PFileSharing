@@ -3,6 +3,7 @@ package tracker
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"sync"
 
 	"Lab1/communication"
+	"Lab1/util"
 )
 
 type hostPort string
@@ -33,11 +35,14 @@ type Tracker struct {
 }
 
 var t Tracker
-var logger = log.New(os.Stdout, "", 0)
 var remoteFileStatusLock sync.Mutex
 
+var genericLogger = log.New(os.Stdout, "", 0)
+var infoLogger = log.New(os.Stdout, "INFO: ", 0)
+var errorLogger = log.New(os.Stdout, "ERROR: ", 0)
+
 func Start() {
-	logger.Println(welcomeMessage)
+	genericLogger.Println(welcomeMessage)
 
 	reader := bufio.NewReader(os.Stdin)
 	for {
@@ -51,26 +56,26 @@ func Start() {
 		switch args[0] {
 		case start:
 			if len(args) != 2 {
-				logger.Printf("%s. %s\n", badArguments, helpPrompt)
+				errorLogger.Printf("%s. %s\n", badArguments, helpPrompt)
 				continue
 			}
 			t.start(args[1])
 		case help:
-			logger.Printf("%s\n", helpMessage)
+			genericLogger.Printf("%s\n", helpMessage)
 		default:
-			logger.Printf("%s %q. %s\n", unrecognizedCommand, args[0], helpPrompt)
+			errorLogger.Printf("%s %q. %s\n", unrecognizedCommand, args[0], helpPrompt)
 		}
 	}
 }
 
 func (t *Tracker) start(hostPort string) {
 	if t.listening == true {
-		logger.Printf("%s %s\n", trackerAlreadyRunningAt, t.hostPort)
+		infoLogger.Printf("%s %s\n", trackerAlreadyRunningAt, t.hostPort)
 		return
 	}
 
 	if _, _, err := net.SplitHostPort(hostPort); err != nil {
-		logger.Printf("%s. %s\n", badIpPortArgument, helpPrompt)
+		errorLogger.Printf("%s. %s\n", badIpPortArgument, helpPrompt)
 		return
 	}
 
@@ -78,12 +83,13 @@ func (t *Tracker) start(hostPort string) {
 
 	l, err := net.Listen("tcp", hostPort)
 	if err != nil {
-		logger.Printf("Error: %v\n", err)
+		errorLogger.Printf("%v\n", err)
 		return
 	}
 	t.listener = &l
 	t.listening = true
-	logger.Printf("Tracker is online and listening on %s\n", hostPort)
+	t.remoteFileLocations = make(map[remoteFile]remoteFileStatus)
+	infoLogger.Printf("%s %s\n", trackerOnlineListeningOn, hostPort)
 
 	go serve()
 }
@@ -92,83 +98,103 @@ func serve() {
 	for {
 		conn, err := (*t.listener).Accept()
 		if err != nil {
-			logger.Printf("Error: %v\n", err)
+			errorLogger.Printf("%v\n", err)
 			continue
 		}
-		go handleRequest(&conn)
+		go parseRequest(&conn)
 	}
 }
 
-func handleRequest(conn *net.Conn) {
+func parseRequest(conn *net.Conn) {
 	defer func() {
 		if err := (*conn).Close(); err != nil {
-			logger.Printf("Error when closing tcp connection: %v\n", err)
+			errorLogger.Printf("%v\n", err)
 		}
 	}()
 
-	req := struct {
-		RequestId string
-		Operation communication.PeerTrackerOperation
-		Args      json.RawMessage
-	}{}
-
+	var req genericRequest
 	d := json.NewDecoder(*conn)
 	if err := d.Decode(&req); err != nil {
-		logger.Printf("Error: %v\n", err)
+		errorLogger.Printf("%v\n", err)
 		return
 	}
 
-	switch req.Operation {
+	switch req.Header.Operation {
 	case communication.Register:
-		args := struct {
-			HostPort     string
-			FilesToShare []communication.P2PFile
-		}{}
-		err := json.Unmarshal(req.Args, &args)
+		var body communication.PeerRegisterRequestBody
+		err := json.Unmarshal(req.Body, &body)
 		if err != nil {
-			logger.Printf("Error: %v\n", err)
+			errorLogger.Printf("%v\n", err)
+			respondWithError(conn, communication.Register, req.Header, err)
 			return
 		}
 
-		if args.FilesToShare != nil {
-			remoteFileStatusLock.Lock()
-			for _, fileToShare := range args.FilesToShare {
-				f := remoteFile{
-					name:     fileToShare.Name,
-					checksum: fileToShare.Checksum,
-				}
-				if status, ok := t.remoteFileLocations[f]; ok {
-					if status.locationsOfChunks == nil || status.size != fileToShare.Size {
-						// todo: server error
-						return
-					}
-					for i := 0; i < calculateNumberOfChunks(status.size); i++ {
-						hostPorts := status.locationsOfChunks[i]
-						if _, ok := hostPorts[hostPort(args.HostPort)]; !ok {
-							hostPorts[hostPort(args.HostPort)] = struct{}{}
-						}
-					}
-				} else {
-					locations := make([]map[hostPort]struct{}, 0)
-					for i := 0; i < calculateNumberOfChunks(fileToShare.Size); i++ {
-						locations = append(locations, map[hostPort]struct{}{
-							hostPort(args.HostPort): {},
-						})
-					}
-					t.remoteFileLocations[f] = remoteFileStatus{
-						size:              fileToShare.Size,
-						locationsOfChunks: locations,
-					}
-				}
-			}
-			remoteFileStatusLock.Unlock()
-		}
+		handleRegister(conn, communication.PeerRegisterRequest{
+			Header: req.Header,
+			Body:   body,
+		})
 
 	case communication.List:
 
 	case communication.Find:
 
 	default:
-		logger.Printf("%s %q.\n", unrecognizedPeerTrackerOperation, req.Operation)
+		errorLogger.Printf("%s %q.\n", unrecognizedPeerTrackerOperation, req.Header.Operation)
+		respondWithError(conn, unrecognizedOp, req.Header, fmt.Errorf("%s", unrecognizedPeerTrackerOperation))
+	}
+}
+
+func handleRegister(conn *net.Conn, req communication.PeerRegisterRequest) {
+	infoLogger.Printf("%s:\n", handlingRequest)
+	util.PrettyLogStruct(genericLogger, req)
+
+	b := req.Body
+	if b.FilesToShare != nil {
+		remoteFileStatusLock.Lock()
+		for _, fileToShare := range b.FilesToShare {
+			f := remoteFile{
+				name:     fileToShare.Name,
+				checksum: fileToShare.Checksum,
+			}
+			// if file has not been recorded
+			if status, ok := t.remoteFileLocations[f]; !ok {
+				locations := make([]map[hostPort]struct{}, 0)
+				for i := 0; i < calculateNumberOfChunks(fileToShare.Size); i++ {
+					locations = append(locations, map[hostPort]struct{}{
+						hostPort(b.HostPort): {},
+					})
+				}
+				t.remoteFileLocations[f] = remoteFileStatus{
+					size:              fileToShare.Size,
+					locationsOfChunks: locations,
+				}
+			} else { // file has been recorded
+				if status.locationsOfChunks == nil || status.size != fileToShare.Size {
+					respondWithError(conn, communication.Register, req.Header, fmt.Errorf("%s", internalTrackerError))
+					return
+				}
+				for i := 0; i < calculateNumberOfChunks(status.size); i++ {
+					hostPorts := status.locationsOfChunks[i]
+					if _, ok := hostPorts[hostPort(b.HostPort)]; !ok {
+						hostPorts[hostPort(b.HostPort)] = struct{}{}
+					}
+				}
+			}
+		}
+		remoteFileStatusLock.Unlock()
+	}
+
+	resp, _ := json.Marshal(communication.PeerRegisterResponse{
+		Header: req.Header,
+		Result: communication.TrackerResponseResult{
+			Result:         communication.Success,
+			DetailedResult: registerSuccessful,
+		},
+		RegisteredFiles: b.FilesToShare,
+	})
+
+	if _, err := (*conn).Write(resp); err != nil {
+		errorLogger.Printf("%v\n", err)
+		return
 	}
 }

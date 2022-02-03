@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"Lab1/communication"
@@ -28,22 +27,18 @@ type Peer struct {
 	selfHostPort    string
 	trackerHostPort string
 	filesToShare    []localFile
-	registered      bool
+	filesToHost     map[string][]localFile
 }
 
 var self Peer
-var selfLock sync.Mutex
-
-var logger = log.New(os.Stdout, "", 0)
+var genericLogger = log.New(os.Stdout, "", 0)
+var infoLogger = log.New(os.Stdout, "INFO: ", 0)
+var errorLogger = log.New(os.Stdout, "ERROR: ", 0)
 
 func Start() {
-	logger.Println(welcomeMessage)
+	genericLogger.Println(welcomeMessage)
 
 	reader := bufio.NewReader(os.Stdin)
-
-	// to avoid duplicate ongoing registration
-	registerChan := make(chan struct{}, 1)
-	registerChan <- struct{}{}
 
 	for {
 		command, _ := reader.ReadString('\n')
@@ -56,68 +51,71 @@ func Start() {
 		switch args[0] {
 		case register:
 			if len(args) < 3 {
-				logger.Printf("%s. %s\n", badArguments, helpPrompt)
+				errorLogger.Printf("%s. %s\n", badArguments, helpPrompt)
 				continue
 			}
-			go self.register(registerChan, args[1], args[2], args[3:])
+			self.register(args[1], args[2], args[3:])
 		case list:
 			if len(args) != 1 {
-				logger.Printf("%s. %s\n", badArguments, helpPrompt)
+				errorLogger.Printf("%s. %s\n", badArguments, helpPrompt)
 				continue
 			}
 
 		case find:
 			if len(args) != 2 {
-				logger.Printf("%s. %s\n", badArguments, helpPrompt)
+				errorLogger.Printf("%s. %s\n", badArguments, helpPrompt)
 				continue
 			}
 
 		case download:
 			if len(args) != 2 {
-				logger.Printf("%s. %s\n", badArguments, helpPrompt)
+				errorLogger.Printf("%s. %s\n", badArguments, helpPrompt)
 				continue
 			}
 
 		case help:
-			logger.Printf("%s\n", helpMessage)
+			genericLogger.Printf("%s\n", helpMessage)
 		default:
-			logger.Printf("%s %q. %s\n", unrecognizedCommand, args[0], helpPrompt)
+			errorLogger.Printf("%s %q. %s\n", unrecognizedCommand, args[0], helpPrompt)
 		}
 	}
 }
 
-func (p *Peer) register(c chan struct{}, trackerHostPort, selfHostPort string, filepaths []string) {
-	// to avoid duplicate ongoing registration
-	<-c
-	defer func() {
-		c <- struct{}{}
-	}()
-
+func (p *Peer) register(trackerHostPort, selfHostPort string, filepaths []string) {
 	for _, hp := range []string{trackerHostPort, selfHostPort} {
 		if _, _, err := net.SplitHostPort(hp); err != nil {
-			logger.Printf("%s. %s\n", badIpPortArgument, helpPrompt)
+			errorLogger.Printf("%s. %s\n", badIpPortArgument, helpPrompt)
 			return
 		}
+	}
+
+	if p.trackerHostPort != "" && p.trackerHostPort != trackerHostPort {
+		infoLogger.Printf("%s %s.\n", alreadyUsingTrackerAt, p.trackerHostPort)
+		return
+	}
+	if p.selfHostPort != "" && p.selfHostPort != selfHostPort {
+		infoLogger.Printf("%s %s.\n", alreadyUsingHostPortAt, p.selfHostPort)
+		return
 	}
 
 	var p2pFiles []localFile
 	for _, path := range filepaths {
 		f, err := os.Open(path)
 		if err != nil {
-			logger.Printf("Error: %v\n", err)
+			errorLogger.Printf("%v\n", err)
 			return
 		}
 
 		checksum, err := util.HashFileSHA256(f)
 		if err != nil {
-			logger.Printf("Error: %v\n", err)
+			errorLogger.Printf("%v\n", err)
 			_ = f.Close()
 			return
 		}
 
 		stat, err := f.Stat()
 		if err != nil {
-			logger.Printf("Error: %v\n", err)
+			errorLogger.Printf("%v\n", err)
 			_ = f.Close()
 			return
 		}
@@ -132,40 +130,39 @@ func (p *Peer) register(c chan struct{}, trackerHostPort, selfHostPort string, f
 		})
 	}
 
-	selfLock.Lock()
 	p.trackerHostPort = trackerHostPort
 	p.selfHostPort = selfHostPort
 	p.filesToShare = p2pFiles
-	selfLock.Unlock()
 
+	// prepare to talk to the tracker
 	requestId := uuid.NewString()
-	req, err := json.Marshal(communication.PeerRegisterRequest{
-		RequestId:    requestId,
-		Operation:    communication.Register,
-		HostPort:     p.selfHostPort,
-		FilesToShare: localFilesToP2PFiles(p.filesToShare),
+	req, _ := json.Marshal(communication.PeerRegisterRequest{
+		Header: communication.PeerTrackerHeader{
+			RequestId: requestId,
+			Operation: communication.Register,
+		},
+		Body: communication.PeerRegisterRequestBody{
+			HostPort:     p.selfHostPort,
+			FilesToShare: localFilesToP2PFiles(p.filesToShare),
+		},
 	})
-	if err != nil {
-		logger.Printf("Error: %v\n", err)
-		return
-	}
 
 	// start to talk to the tracker
 	dialer := net.Dialer{Timeout: 3 * time.Second}
 	conn, err := dialer.Dial("tcp", p.trackerHostPort)
 	if err != nil {
-		logger.Printf("Error: %v\n", err)
+		errorLogger.Printf("%v\n", err)
 		return
 	}
 
 	defer func(conn net.Conn) {
 		if err := conn.Close(); err != nil {
-			logger.Printf("Error: %v\n", err)
+			errorLogger.Printf("%v\n", err)
 		}
 	}(conn)
 
 	if _, err := conn.Write(req); err != nil {
-		logger.Printf("Error: %v\n", err)
+		errorLogger.Printf("%v\n", err)
 		return
 	}
 
@@ -173,24 +170,23 @@ func (p *Peer) register(c chan struct{}, trackerHostPort, selfHostPort string, f
 	var resp communication.PeerRegisterResponse
 	d := json.NewDecoder(conn)
 	if err := d.Decode(&resp); err != nil {
-		logger.Printf("Error: %v\n", err)
+		errorLogger.Printf("%v\n", err)
 		return
 	}
 
-	if resp.RequestId != requestId || resp.Operation != communication.Register {
-		logger.Printf("Error: %v\n", badTrackerResponse)
+	if resp.Header.RequestId != requestId || resp.Header.Operation != communication.Register {
+		errorLogger.Printf("%s\n", badTrackerResponse)
 		return
 	}
 
-	switch resp.Result {
+	switch resp.Result.Result {
 	case communication.Success:
-		// success
+		infoLogger.Printf("%s (%s):\n", fileSuccessfullyRegistered, resp.Result.DetailedResult)
+		for _, f := range resp.RegisteredFiles {
+			util.PrettyLogStruct(genericLogger, f)
+		}
 	case communication.Fail:
-		logger.Printf("Error: %v\n", resp.ErrorMessage)
+		errorLogger.Printf("%s: %s\n", failToRegister, resp.Result.DetailedResult)
 		return
 	}
-
-	selfLock.Lock()
-	p.registered = true
-	selfLock.Unlock()
 }

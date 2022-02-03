@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"Lab1/communication"
 	"Lab1/util"
 )
 
@@ -11,11 +12,17 @@ const (
 	help  = "help"
 	start = "start"
 
-	badArguments                     = "Bad arguments"
-	badIpPortArgument                = "Bad ip:port argument"
-	unrecognizedCommand              = "Unrecognized command"
-	unrecognizedPeerTrackerOperation = "Unrecognized peer tracker operation"
-	trackerAlreadyRunningAt          = "Tracker is already running at"
+	badArguments                     = "bad arguments"
+	badIpPortArgument                = "bad ip:port argument"
+	handlingRequest                  = "handling request"
+	internalTrackerError             = "internal tracker error"
+	registerSuccessful               = "register is successful"
+	trackerAlreadyRunningAt          = "tracker is already running at"
+	trackerOnlineListeningOn         = "tracker is online and listening on"
+	unrecognizedCommand              = "unrecognized command"
+	unrecognizedPeerTrackerOperation = "unrecognized peer tracker operation"
+
+	unrecognizedOp communication.PeerTrackerOperation = "unrecognizedOp"
 )
 
 var helpMessage = strings.Join([]string{

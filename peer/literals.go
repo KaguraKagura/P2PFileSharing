@@ -14,10 +14,14 @@ const (
 	download = "download"
 	help     = "help"
 
-	badArguments        = "Bad arguments"
-	badIpPortArgument   = "Bad ip:port argument"
-	badTrackerResponse  = "Bad tracker response"
-	unrecognizedCommand = "Unrecognized command"
+	alreadyUsingTrackerAt      = "already using tracker at"
+	alreadyUsingHostPortAt     = "already using ip:port at"
+	badArguments               = "bad arguments"
+	badIpPortArgument          = "bad ip:port argument"
+	badTrackerResponse         = "bad tracker response"
+	failToRegister             = "fail to register"
+	fileSuccessfullyRegistered = "files successfully registered"
+	unrecognizedCommand        = "unrecognized command"
 )
 
 var helpMessage = strings.Join([]string{

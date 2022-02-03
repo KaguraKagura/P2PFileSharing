@@ -2,7 +2,6 @@ package communication
 
 type PeerTrackerOperation string
 type PeerPeerOperation string
-type TrackerResponse string
 
 const (
 	CHUNK_SIZE = 10
@@ -12,8 +11,8 @@ const (
 	Find     PeerTrackerOperation = "find"
 	Download PeerPeerOperation    = "download"
 
-	Success TrackerResponse = "success"
-	Fail    TrackerResponse = "fail"
+	Success = "success"
+	Fail    = "fail"
 )
 
 type P2PFile struct {
@@ -23,15 +22,32 @@ type P2PFile struct {
 }
 
 type PeerRegisterRequest struct {
-	RequestId    string
-	Operation    PeerTrackerOperation
+	Header PeerTrackerHeader
+	Body   PeerRegisterRequestBody
+}
+
+type PeerRegisterResponse struct {
+	Header          PeerTrackerHeader
+	Result          TrackerResponseResult
+	RegisteredFiles []P2PFile
+}
+
+type GenericResponse struct {
+	Header PeerTrackerHeader
+	Result TrackerResponseResult
+}
+
+type PeerTrackerHeader struct {
+	RequestId string
+	Operation PeerTrackerOperation
+}
+
+type PeerRegisterRequestBody struct {
 	HostPort     string
 	FilesToShare []P2PFile
 }
 
-type PeerRegisterResponse struct {
-	RequestId    string
-	Operation    PeerTrackerOperation
-	Result       TrackerResponse
-	ErrorMessage string
+type TrackerResponseResult struct {
+	Result         string
+	DetailedResult string
 }
