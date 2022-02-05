@@ -1,6 +1,9 @@
 package peer
 
-import "Lab1/communication"
+import (
+	"Lab1/communication"
+	"fmt"
+)
 
 func localFilesToP2PFiles(localFiles []localFile) []communication.P2PFile {
 	var p2pFiles []communication.P2PFile
@@ -12,4 +15,11 @@ func localFilesToP2PFiles(localFiles []localFile) []communication.P2PFile {
 		})
 	}
 	return p2pFiles
+}
+
+func validateResponseHeader(received, sent communication.Header) error {
+	if received == sent {
+		return fmt.Errorf("%s", badTrackerResponse)
+	}
+	return nil
 }

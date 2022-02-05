@@ -1,8 +1,5 @@
 package communication
 
-type PeerTrackerOperation string
-type PeerPeerOperation string
-
 const (
 	CHUNK_SIZE = 10
 
@@ -15,39 +12,69 @@ const (
 	Fail    = "fail"
 )
 
+type PeerTrackerOperation string
+type PeerPeerOperation string
+type OperationResultCode string
+
 type P2PFile struct {
 	Name     string
 	Checksum string
 	Size     int64
 }
 
-type PeerRegisterRequest struct {
-	Header PeerTrackerHeader
-	Body   PeerRegisterRequestBody
-}
-
-type PeerRegisterResponse struct {
-	Header          PeerTrackerHeader
-	Result          TrackerResponseResult
-	RegisteredFiles []P2PFile
-}
-
-type GenericResponse struct {
-	Header PeerTrackerHeader
-	Result TrackerResponseResult
-}
-
-type PeerTrackerHeader struct {
+type Header struct {
 	RequestId string
 	Operation PeerTrackerOperation
 }
 
-type PeerRegisterRequestBody struct {
+type OperationResult struct {
+	Code   OperationResultCode
+	Detail string
+}
+
+type GenericResponse struct {
+	Header Header
+	Body   GenericResponseBody
+}
+
+type GenericResponseBody struct {
+	Result OperationResult
+}
+
+type RegisterRequest struct {
+	Header Header
+	Body   RegisterRequestBody
+}
+
+type RegisterResponse struct {
+	Header Header
+	Body   RegisterResponseBody
+}
+
+type RegisterRequestBody struct {
 	HostPort     string
 	FilesToShare []P2PFile
 }
 
-type TrackerResponseResult struct {
-	Result         string
-	DetailedResult string
+type RegisterResponseBody struct {
+	Result          OperationResult
+	RegisteredFiles []P2PFile
+}
+
+type FileListRequest struct {
+	Header Header
+	Body   FileListRequestBody
+}
+
+type FileListResponse struct {
+	Header Header
+	Body   FileListResponseBody
+}
+
+type FileListRequestBody struct {
+}
+
+type FileListResponseBody struct {
+	Result OperationResult
+	Files  []P2PFile
 }

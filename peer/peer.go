@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -27,7 +28,7 @@ type Peer struct {
 	selfHostPort    string
 	trackerHostPort string
 	filesToShare    []localFile
-	filesToHost     map[string][]localFile
+	registered      bool
 }
 
 var self Peer
@@ -47,7 +48,7 @@ func Start() {
 			continue
 		}
 
-		args := strings.Split(command, " ")
+		args := strings.Fields(command)
 		switch args[0] {
 		case register:
 			if len(args) < 3 {
@@ -60,7 +61,7 @@ func Start() {
 				errorLogger.Printf("%s. %s\n", badArguments, helpPrompt)
 				continue
 			}
-
+			self.list()
 		case find:
 			if len(args) != 2 {
 				errorLogger.Printf("%s. %s\n", badArguments, helpPrompt)
@@ -72,9 +73,14 @@ func Start() {
 				errorLogger.Printf("%s. %s\n", badArguments, helpPrompt)
 				continue
 			}
-
+		case h:
+			fallthrough
 		case help:
 			genericLogger.Printf("%s\n", helpMessage)
+		case q:
+			fallthrough
+		case quit:
+			os.Exit(0)
 		default:
 			errorLogger.Printf("%s %q. %s\n", unrecognizedCommand, args[0], helpPrompt)
 		}
@@ -136,12 +142,12 @@ func (p *Peer) register(trackerHostPort, selfHostPort string, filepaths []string
 
 	// prepare to talk to the tracker
 	requestId := uuid.NewString()
-	req, _ := json.Marshal(communication.PeerRegisterRequest{
-		Header: communication.PeerTrackerHeader{
+	req, _ := json.Marshal(communication.RegisterRequest{
+		Header: communication.Header{
 			RequestId: requestId,
 			Operation: communication.Register,
 		},
-		Body: communication.PeerRegisterRequestBody{
+		Body: communication.RegisterRequestBody{
 			HostPort:     p.selfHostPort,
 			FilesToShare: localFilesToP2PFiles(p.filesToShare),
 		},
@@ -154,7 +160,6 @@ func (p *Peer) register(trackerHostPort, selfHostPort string, filepaths []string
 		errorLogger.Printf("%v\n", err)
 		return
 	}
-
 	defer func(conn net.Conn) {
 		if err := conn.Close(); err != nil {
 			errorLogger.Printf("%v\n", err)
@@ -167,26 +172,98 @@ func (p *Peer) register(trackerHostPort, selfHostPort string, filepaths []string
 	}
 
 	// get response from tracker
-	var resp communication.PeerRegisterResponse
+	var resp communication.RegisterResponse
 	d := json.NewDecoder(conn)
 	if err := d.Decode(&resp); err != nil {
 		errorLogger.Printf("%v\n", err)
 		return
 	}
 
-	if resp.Header.RequestId != requestId || resp.Header.Operation != communication.Register {
-		errorLogger.Printf("%s\n", badTrackerResponse)
+	if err := validateResponseHeader(resp.Header, communication.Header{
+		RequestId: requestId,
+		Operation: communication.Register,
+	}); err != nil {
+		errorLogger.Printf("%v\n", err)
+	}
+
+	switch resp.Body.Result.Code {
+	case communication.Success:
+		infoLogger.Printf("%s: %s\n", resp.Body.Result.Code, resp.Body.Result.Detail)
+		registeredFiles := resp.Body.RegisteredFiles
+		if registeredFiles != nil {
+			genericLogger.Printf("%s:\n", registeredFilesAre)
+			for _, f := range registeredFiles {
+				util.PrettyLogStruct(genericLogger, f)
+			}
+		}
+	case communication.Fail:
+		errorLogger.Printf("%s: %s\n", resp.Body.Result.Code, resp.Body.Result.Detail)
 		return
 	}
 
-	switch resp.Result.Result {
+	p.registered = true
+}
+
+func (p *Peer) list() {
+	requestId := uuid.NewString()
+	req, _ := json.Marshal(communication.FileListRequest{
+		Header: communication.Header{
+			RequestId: requestId,
+			Operation: communication.List,
+		},
+		Body: communication.FileListRequestBody{},
+	})
+
+	// start to talk to the tracker
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := dialer.Dial("tcp", p.trackerHostPort)
+	if err != nil {
+		errorLogger.Printf("%v\n", err)
+		return
+	}
+	defer func(conn net.Conn) {
+		if err := conn.Close(); err != nil {
+			errorLogger.Printf("%v\n", err)
+		}
+	}(conn)
+
+	if _, err := conn.Write(req); err != nil {
+		errorLogger.Printf("%v\n", err)
+		return
+	}
+
+	// get response from tracker
+	var resp communication.FileListResponse
+	d := json.NewDecoder(conn)
+	if err := d.Decode(&resp); err != nil {
+		errorLogger.Printf("%v\n", err)
+		return
+	}
+
+	if err := validateResponseHeader(resp.Header, communication.Header{
+		RequestId: requestId,
+		Operation: communication.Register,
+	}); err != nil {
+		errorLogger.Printf("%v\n", err)
+	}
+
+	switch resp.Body.Result.Code {
 	case communication.Success:
-		infoLogger.Printf("%s (%s):\n", fileSuccessfullyRegistered, resp.Result.DetailedResult)
-		for _, f := range resp.RegisteredFiles {
-			util.PrettyLogStruct(genericLogger, f)
+		infoLogger.Printf("%s: %s\n", resp.Body.Result.Code, resp.Body.Result.Detail)
+		files := resp.Body.Files
+		if files != nil {
+			sort.Slice(files, func(i, j int) bool {
+				return files[i].Name < files[j].Name
+			})
+			genericLogger.Printf("%s:\n", availableFilesAre)
+			for _, f := range files {
+				util.PrettyLogStruct(genericLogger, f)
+			}
+		} else {
+			genericLogger.Printf("%s\n", noAvailableFileRightNow)
 		}
 	case communication.Fail:
-		errorLogger.Printf("%s: %s\n", failToRegister, resp.Result.DetailedResult)
+		errorLogger.Printf("%s: %s\n", resp.Body.Result.Code, resp.Body.Result.Detail)
 		return
 	}
 }

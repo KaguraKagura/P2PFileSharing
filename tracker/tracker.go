@@ -34,12 +34,14 @@ type Tracker struct {
 	remoteFileLocations map[remoteFile]remoteFileStatus
 }
 
-var t Tracker
-var remoteFileStatusLock sync.Mutex
+var (
+	tracker              Tracker
+	remoteFileStatusLock sync.Mutex
 
-var genericLogger = log.New(os.Stdout, "", 0)
-var infoLogger = log.New(os.Stdout, "INFO: ", 0)
-var errorLogger = log.New(os.Stdout, "ERROR: ", 0)
+	genericLogger = log.New(os.Stdout, "", 0)
+	infoLogger    = log.New(os.Stdout, "INFO: ", 0)
+	errorLogger   = log.New(os.Stdout, "ERROR: ", 0)
+)
 
 func Start() {
 	genericLogger.Println(welcomeMessage)
@@ -59,9 +61,15 @@ func Start() {
 				errorLogger.Printf("%s. %s\n", badArguments, helpPrompt)
 				continue
 			}
-			t.start(args[1])
+			tracker.start(args[1])
+		case h:
+			fallthrough
 		case help:
 			genericLogger.Printf("%s\n", helpMessage)
+		case q:
+			fallthrough
+		case quit:
+			os.Exit(0)
 		default:
 			errorLogger.Printf("%s %q. %s\n", unrecognizedCommand, args[0], helpPrompt)
 		}
@@ -96,55 +104,74 @@ func (t *Tracker) start(hostPort string) {
 
 func serve() {
 	for {
-		conn, err := (*t.listener).Accept()
+		conn, err := (*tracker.listener).Accept()
 		if err != nil {
 			errorLogger.Printf("%v\n", err)
 			continue
 		}
-		go parseRequest(&conn)
+
+		go func() {
+			defer func() {
+				if err := conn.Close(); err != nil {
+					errorLogger.Printf("%v\n", err)
+				}
+			}()
+
+			var req genericRequest
+			d := json.NewDecoder(conn)
+			if err := d.Decode(&req); err != nil {
+				errorLogger.Printf("%v\n", err)
+				return
+			}
+
+			var (
+				resp []byte
+				err  error
+			)
+			switch req.Header.Operation {
+			case communication.Register:
+				var body communication.RegisterRequestBody
+				if err = json.Unmarshal(req.Body, &body); err != nil {
+					break
+				}
+				if resp, err = tracker.handleRegister(communication.RegisterRequest{
+					Header: req.Header,
+					Body:   body,
+				}); err != nil {
+					break
+				}
+			case communication.List:
+				var body communication.FileListRequestBody
+				if err = json.Unmarshal(req.Body, &body); err != nil {
+					break
+				}
+				if resp, err = tracker.handleList(communication.FileListRequest{
+					Header: req.Header,
+					Body:   body,
+				}); err != nil {
+					break
+				}
+			case communication.Find:
+
+			default:
+				err = fmt.Errorf("%s %q.\n", unrecognizedPeerTrackerOperation, req.Header.Operation)
+			}
+
+			if err != nil {
+				errorLogger.Printf("%v\n", err)
+				resp = makeFailedOperationResponse(req.Header, err)
+			}
+
+			if _, err := conn.Write(resp); err != nil {
+				errorLogger.Printf("%v\n", err)
+			}
+		}()
 	}
 }
 
-func parseRequest(conn *net.Conn) {
-	defer func() {
-		if err := (*conn).Close(); err != nil {
-			errorLogger.Printf("%v\n", err)
-		}
-	}()
-
-	var req genericRequest
-	d := json.NewDecoder(*conn)
-	if err := d.Decode(&req); err != nil {
-		errorLogger.Printf("%v\n", err)
-		return
-	}
-
-	switch req.Header.Operation {
-	case communication.Register:
-		var body communication.PeerRegisterRequestBody
-		err := json.Unmarshal(req.Body, &body)
-		if err != nil {
-			errorLogger.Printf("%v\n", err)
-			respondWithError(conn, communication.Register, req.Header, err)
-			return
-		}
-
-		handleRegister(conn, communication.PeerRegisterRequest{
-			Header: req.Header,
-			Body:   body,
-		})
-
-	case communication.List:
-
-	case communication.Find:
-
-	default:
-		errorLogger.Printf("%s %q.\n", unrecognizedPeerTrackerOperation, req.Header.Operation)
-		respondWithError(conn, unrecognizedOp, req.Header, fmt.Errorf("%s", unrecognizedPeerTrackerOperation))
-	}
-}
-
-func handleRegister(conn *net.Conn, req communication.PeerRegisterRequest) {
+// handleRegister returns a valid response and nil if the request is successfully served else returns nil and error
+// the []byte return value has been encoded into a raw json message
+func (t *Tracker) handleRegister(req communication.RegisterRequest) ([]byte, error) {
 	infoLogger.Printf("%s:\n", handlingRequest)
 	util.PrettyLogStruct(genericLogger, req)
 
@@ -157,22 +184,18 @@ func handleRegister(conn *net.Conn, req communication.PeerRegisterRequest) {
 				checksum: fileToShare.Checksum,
 			}
 			// if file has not been recorded
-			if status, ok := t.remoteFileLocations[f]; !ok {
+			if status, ok := tracker.remoteFileLocations[f]; !ok {
 				locations := make([]map[hostPort]struct{}, 0)
 				for i := 0; i < calculateNumberOfChunks(fileToShare.Size); i++ {
 					locations = append(locations, map[hostPort]struct{}{
 						hostPort(b.HostPort): {},
 					})
 				}
-				t.remoteFileLocations[f] = remoteFileStatus{
+				tracker.remoteFileLocations[f] = remoteFileStatus{
 					size:              fileToShare.Size,
 					locationsOfChunks: locations,
 				}
 			} else { // file has been recorded
-				if status.locationsOfChunks == nil || status.size != fileToShare.Size {
-					respondWithError(conn, communication.Register, req.Header, fmt.Errorf("%s", internalTrackerError))
-					return
-				}
 				for i := 0; i < calculateNumberOfChunks(status.size); i++ {
 					hostPorts := status.locationsOfChunks[i]
 					if _, ok := hostPorts[hostPort(b.HostPort)]; !ok {
@@ -184,17 +207,44 @@ func handleRegister(conn *net.Conn, req communication.PeerRegisterRequest) {
 		remoteFileStatusLock.Unlock()
 	}
 
-	resp, _ := json.Marshal(communication.PeerRegisterResponse{
+	resp, _ := json.Marshal(communication.RegisterResponse{
 		Header: req.Header,
-		Result: communication.TrackerResponseResult{
-			Result:         communication.Success,
-			DetailedResult: registerSuccessful,
+		Body: communication.RegisterResponseBody{
+			Result: communication.OperationResult{
+				Code:   communication.Success,
+				Detail: registerIsSuccessful,
+			},
+			RegisteredFiles: b.FilesToShare,
 		},
-		RegisteredFiles: b.FilesToShare,
+	})
+	return resp, nil
+}
+
+func (t *Tracker) handleList(req communication.FileListRequest) ([]byte, error) {
+	infoLogger.Printf("%s:\n", handlingRequest)
+	util.PrettyLogStruct(genericLogger, req)
+
+	var p2pFiles []communication.P2PFile
+	remoteFileStatusLock.Lock()
+	for fileID, stat := range t.remoteFileLocations {
+		p2pFiles = append(p2pFiles, communication.P2PFile{
+			Name:     fileID.name,
+			Checksum: fileID.checksum,
+			Size:     stat.size,
+		})
+	}
+	remoteFileStatusLock.Unlock()
+
+	resp, _ := json.Marshal(communication.FileListResponse{
+		Header: req.Header,
+		Body: communication.FileListResponseBody{
+			Result: communication.OperationResult{
+				Code:   communication.Success,
+				Detail: lookUpFileListIsSuccessful,
+			},
+			Files: p2pFiles,
+		},
 	})
 
-	if _, err := (*conn).Write(resp); err != nil {
-		errorLogger.Printf("%v\n", err)
-		return
-	}
+	return resp, nil
 }

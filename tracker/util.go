@@ -2,55 +2,47 @@ package tracker
 
 import (
 	"encoding/json"
-	"net"
 
 	"Lab1/communication"
 )
 
 type genericRequest struct {
-	Header communication.PeerTrackerHeader
+	Header communication.Header
 	Body   json.RawMessage
 }
 
 func calculateNumberOfChunks(fileSize int64) int {
+	// todo
 	return -1
 }
 
-func respondWithError(conn *net.Conn, op communication.PeerTrackerOperation, header communication.PeerTrackerHeader, e error) {
-	var resp interface{}
-	switch op {
+// the []byte return value has been encoded into a raw json message
+func makeFailedOperationResponse(header communication.Header, e error) []byte {
+	result := communication.OperationResult{
+		Code:   communication.Fail,
+		Detail: e.Error(),
+	}
+
+	var resp []byte
+	switch header.Operation {
 	case communication.Register:
-		resp, _ = json.Marshal(communication.PeerRegisterResponse{
-			Header: communication.PeerTrackerHeader{
-				RequestId: header.RequestId,
-				Operation: header.Operation,
+		resp, _ = json.Marshal(communication.RegisterResponse{
+			Header: header,
+			Body: communication.RegisterResponseBody{
+				Result:          result,
+				RegisteredFiles: nil,
 			},
-			Result: communication.TrackerResponseResult{
-				Result:         communication.Fail,
-				DetailedResult: e.Error(),
-			},
-			RegisteredFiles: nil,
 		})
 	// todo other cases
 
-	case unrecognizedOp:
-		fallthrough
 	default:
 		resp, _ = json.Marshal(communication.GenericResponse{
-			Header: communication.PeerTrackerHeader{
-				RequestId: header.RequestId,
-				Operation: header.Operation,
-			},
-			Result: communication.TrackerResponseResult{
-				Result:         communication.Fail,
-				DetailedResult: e.Error(),
+			Header: header,
+			Body: communication.GenericResponseBody{
+				Result: result,
 			},
 		})
 	}
 
-	_, err := (*conn).Write(resp.([]byte))
-	if err != nil {
-		errorLogger.Printf("%v\n", err)
-		return
-	}
+	return resp
 }
