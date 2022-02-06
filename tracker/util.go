@@ -11,11 +11,6 @@ type genericRequest struct {
 	Body   json.RawMessage
 }
 
-func calculateNumberOfChunks(fileSize int64) int {
-	// todo
-	return -1
-}
-
 // the []byte return value has been encoded into a raw json message
 func makeFailedOperationResponse(header communication.Header, e error) []byte {
 	result := communication.OperationResult{
@@ -33,6 +28,23 @@ func makeFailedOperationResponse(header communication.Header, e error) []byte {
 				RegisteredFiles: nil,
 			},
 		})
+	case communication.List:
+		resp, _ = json.Marshal(communication.ListFileResponse{
+			Header: header,
+			Body: communication.ListFileResponseBody{
+				Result: result,
+				Files:  nil,
+			},
+		})
+	case communication.Find:
+		resp, _ = json.Marshal(communication.FindFileResponse{
+			Header: header,
+			Body: communication.FindFileResponseBody{
+				Result:         result,
+				ChunkLocations: nil,
+			},
+		})
+
 	// todo other cases
 
 	default:

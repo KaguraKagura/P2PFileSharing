@@ -14,16 +14,15 @@ import (
 	"Lab1/util"
 )
 
-type hostPort string
-
 type remoteFile struct {
 	name     string
 	checksum string
 }
 
 type remoteFileStatus struct {
-	size              int64
-	locationsOfChunks []map[hostPort]struct{} // each chunk index to a set of hostPort
+	size int64
+	// chunkLocations: for each (chunk) index is a set of host:port containing the chunk
+	chunkLocations []map[string]struct{}
 }
 
 type Tracker struct {
@@ -141,18 +140,27 @@ func serve() {
 					break
 				}
 			case communication.List:
-				var body communication.FileListRequestBody
+				var body communication.ListFileRequestBody
 				if err = json.Unmarshal(req.Body, &body); err != nil {
 					break
 				}
-				if resp, err = tracker.handleList(communication.FileListRequest{
+				if resp, err = tracker.handleList(communication.ListFileRequest{
 					Header: req.Header,
 					Body:   body,
 				}); err != nil {
 					break
 				}
 			case communication.Find:
-
+				var body communication.FindFileRequestBody
+				if err = json.Unmarshal(req.Body, &body); err != nil {
+					break
+				}
+				if resp, err = tracker.handleFind(communication.FindFileRequest{
+					Header: req.Header,
+					Body:   body,
+				}); err != nil {
+					break
+				}
 			default:
 				err = fmt.Errorf("%s %q.\n", unrecognizedPeerTrackerOperation, req.Header.Operation)
 			}
@@ -185,21 +193,21 @@ func (t *Tracker) handleRegister(req communication.RegisterRequest) ([]byte, err
 			}
 			// if file has not been recorded
 			if status, ok := tracker.remoteFileLocations[f]; !ok {
-				locations := make([]map[hostPort]struct{}, 0)
-				for i := 0; i < calculateNumberOfChunks(fileToShare.Size); i++ {
-					locations = append(locations, map[hostPort]struct{}{
-						hostPort(b.HostPort): {},
+				locations := make([]map[string]struct{}, 0)
+				for i := 0; i < util.CalculateNumberOfChunks(fileToShare.Size); i++ {
+					locations = append(locations, map[string]struct{}{
+						b.HostPort: {},
 					})
 				}
 				tracker.remoteFileLocations[f] = remoteFileStatus{
-					size:              fileToShare.Size,
-					locationsOfChunks: locations,
+					size:           fileToShare.Size,
+					chunkLocations: locations,
 				}
 			} else { // file has been recorded
-				for i := 0; i < calculateNumberOfChunks(status.size); i++ {
-					hostPorts := status.locationsOfChunks[i]
-					if _, ok := hostPorts[hostPort(b.HostPort)]; !ok {
-						hostPorts[hostPort(b.HostPort)] = struct{}{}
+				for i := 0; i < util.CalculateNumberOfChunks(status.size); i++ {
+					hostPortSet := status.chunkLocations[i]
+					if _, ok := hostPortSet[b.HostPort]; !ok {
+						hostPortSet[b.HostPort] = struct{}{}
 					}
 				}
 			}
@@ -220,7 +228,7 @@ func (t *Tracker) handleRegister(req communication.RegisterRequest) ([]byte, err
 	return resp, nil
 }
 
-func (t *Tracker) handleList(req communication.FileListRequest) ([]byte, error) {
+func (t *Tracker) handleList(req communication.ListFileRequest) ([]byte, error) {
 	infoLogger.Printf("%s:\n", handlingRequest)
 	util.PrettyLogStruct(genericLogger, req)
 
@@ -235,14 +243,43 @@ func (t *Tracker) handleList(req communication.FileListRequest) ([]byte, error) 
 	}
 	remoteFileStatusLock.Unlock()
 
-	resp, _ := json.Marshal(communication.FileListResponse{
+	resp, _ := json.Marshal(communication.ListFileResponse{
 		Header: req.Header,
-		Body: communication.FileListResponseBody{
+		Body: communication.ListFileResponseBody{
 			Result: communication.OperationResult{
 				Code:   communication.Success,
 				Detail: lookUpFileListIsSuccessful,
 			},
 			Files: p2pFiles,
+		},
+	})
+
+	return resp, nil
+}
+
+func (t *Tracker) handleFind(req communication.FindFileRequest) ([]byte, error) {
+	infoLogger.Printf("%s:\n", handlingRequest)
+	util.PrettyLogStruct(genericLogger, req)
+
+	remoteFileStatusLock.Lock()
+	status, ok := t.remoteFileLocations[remoteFile{
+		name:     req.Body.FileName,
+		checksum: req.Body.Checksum,
+	}]
+	remoteFileStatusLock.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("%s", fileDoesNotExist)
+	}
+
+	resp, _ := json.Marshal(communication.FindFileResponse{
+		Header: req.Header,
+		Body: communication.FindFileResponseBody{
+			Result: communication.OperationResult{
+				Code:   communication.Success,
+				Detail: fileIsFound,
+			},
+			FileSize:       status.size,
+			ChunkLocations: status.chunkLocations,
 		},
 	})
 

@@ -16,6 +16,8 @@ const (
 
 	badArguments                     = "bad arguments"
 	badIpPortArgument                = "bad ip:port argument"
+	fileDoesNotExist                 = "file does not exist"
+	fileIsFound                      = "file is found"
 	handlingRequest                  = "handling request"
 	lookUpFileListIsSuccessful       = "look up file list is successful"
 	registerIsSuccessful             = "register is successful"

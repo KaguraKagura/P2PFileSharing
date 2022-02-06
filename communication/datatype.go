@@ -1,7 +1,7 @@
 package communication
 
 const (
-	CHUNK_SIZE = 10
+	CHUNK_SIZE = 1024 * 1024
 
 	Register PeerTrackerOperation = "register"
 	List     PeerTrackerOperation = "list"
@@ -15,6 +15,7 @@ const (
 type PeerTrackerOperation string
 type PeerPeerOperation string
 type OperationResultCode string
+type ChunkLocations []map[string]struct{}
 
 type P2PFile struct {
 	Name     string
@@ -61,20 +62,42 @@ type RegisterResponseBody struct {
 	RegisteredFiles []P2PFile
 }
 
-type FileListRequest struct {
+type ListFileRequest struct {
 	Header Header
-	Body   FileListRequestBody
+	Body   ListFileRequestBody
 }
 
-type FileListResponse struct {
+type ListFileResponse struct {
 	Header Header
-	Body   FileListResponseBody
+	Body   ListFileResponseBody
 }
 
-type FileListRequestBody struct {
+type ListFileRequestBody struct {
 }
 
-type FileListResponseBody struct {
+type ListFileResponseBody struct {
 	Result OperationResult
 	Files  []P2PFile
+}
+
+type FindFileRequest struct {
+	Header Header
+	Body   FindFileRequestBody
+}
+
+type FindFileResponse struct {
+	Header Header
+	Body   FindFileResponseBody
+}
+
+type FindFileRequestBody struct {
+	FileName string
+	Checksum string
+}
+
+type FindFileResponseBody struct {
+	Result   OperationResult
+	FileSize int64
+	// ChunkLocations: for each (chunk) index is a set of host:port containing the chunk
+	ChunkLocations ChunkLocations
 }

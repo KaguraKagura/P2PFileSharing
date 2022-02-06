@@ -39,3 +39,8 @@ func PrettyLogStruct(logger *log.Logger, v interface{}) {
 	prettyString, _ := json.MarshalIndent(v, "", "\t")
 	logger.Printf("%s", prettyString)
 }
+
+func CalculateNumberOfChunks(fileSize int64) int {
+	// todo
+	return 5
+}
