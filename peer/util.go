@@ -1,12 +1,11 @@
 package peer
 
 import (
+	"Lab1/communication"
+	"Lab1/util"
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"Lab1/communication"
-	"Lab1/util"
 )
 
 func localFilesToP2PFiles(localFiles []localFile) []communication.P2PFile {
@@ -21,14 +20,21 @@ func localFilesToP2PFiles(localFiles []localFile) []communication.P2PFile {
 	return p2pFiles
 }
 
-func validateResponseHeader(received, sent communication.Header) error {
+func validatePeerPeerHeader(received, sent communication.PeerPeerHeader) error {
 	if received != sent {
 		return fmt.Errorf("%s", badTrackerResponse)
 	}
 	return nil
 }
 
-func validateFilepaths(filepaths []string) ([]localFile, error) {
+func validatePeerTrackerHeader(received, sent communication.PeerTrackerHeader) error {
+	if received != sent {
+		return fmt.Errorf("%s", badTrackerResponse)
+	}
+	return nil
+}
+
+func makeLocalFiles(filepaths []string) ([]localFile, error) {
 	var p2pFiles []localFile
 	for _, path := range filepaths {
 		f, err := os.Open(path)
@@ -36,7 +42,7 @@ func validateFilepaths(filepaths []string) ([]localFile, error) {
 			return nil, err
 		}
 
-		checksum, err := util.HashFileSHA256(f)
+		checksum, err := util.Sha256FileChecksum(f)
 		if err != nil {
 			_ = f.Close()
 			return nil, err
@@ -60,12 +66,12 @@ func validateFilepaths(filepaths []string) ([]localFile, error) {
 	return p2pFiles, nil
 }
 
-func pickChunk(locations communication.ChunkLocations, excludeIndex map[int64]struct{}) chunkToDownload {
-	//todo
-	if len(excludeIndex) != 0 {
-		//todo:
+func pickChunk(locations communication.ChunkLocations, excludedChunkIndex map[int64]struct{}) toBeDownloadedChunk {
+	//todo: work
+	if len(excludedChunkIndex) != 0 {
+		//todo: work
 	}
-	return chunkToDownload{ // todo
+	return toBeDownloadedChunk{ // todo: fill fields
 		index:    0,
 		hostPort: "",
 	}

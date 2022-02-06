@@ -7,12 +7,12 @@ import (
 )
 
 type genericRequest struct {
-	Header communication.Header
+	Header communication.PeerTrackerHeader
 	Body   json.RawMessage
 }
 
 // the []byte return value has been encoded into a raw json message
-func makeFailedOperationResponse(header communication.Header, e error) []byte {
+func makeFailedOperationResponse(header communication.PeerTrackerHeader, e error) []byte {
 	result := communication.OperationResult{
 		Code:   communication.Fail,
 		Detail: e.Error(),

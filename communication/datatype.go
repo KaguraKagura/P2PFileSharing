@@ -1,12 +1,13 @@
 package communication
 
 const (
-	CHUNK_SIZE = 1024 * 1024
+	ChunkSize = 1024 * 1024
 
 	Register PeerTrackerOperation = "register"
 	List     PeerTrackerOperation = "list"
 	Find     PeerTrackerOperation = "find"
-	Download PeerPeerOperation    = "download"
+
+	DownloadChunk PeerPeerOperation = "download_chunk"
 
 	Success = "success"
 	Fail    = "fail"
@@ -23,9 +24,14 @@ type P2PFile struct {
 	Size     int64
 }
 
-type Header struct {
+type PeerTrackerHeader struct {
 	RequestId string
 	Operation PeerTrackerOperation
+}
+
+type PeerPeerHeader struct {
+	RequestId string
+	Operation PeerPeerOperation
 }
 
 type OperationResult struct {
@@ -34,7 +40,7 @@ type OperationResult struct {
 }
 
 type GenericResponse struct {
-	Header Header
+	Header PeerTrackerHeader
 	Body   GenericResponseBody
 }
 
@@ -43,12 +49,12 @@ type GenericResponseBody struct {
 }
 
 type RegisterRequest struct {
-	Header Header
+	Header PeerTrackerHeader
 	Body   RegisterRequestBody
 }
 
 type RegisterResponse struct {
-	Header Header
+	Header PeerTrackerHeader
 	Body   RegisterResponseBody
 }
 
@@ -63,12 +69,12 @@ type RegisterResponseBody struct {
 }
 
 type ListFileRequest struct {
-	Header Header
+	Header PeerTrackerHeader
 	Body   ListFileRequestBody
 }
 
 type ListFileResponse struct {
-	Header Header
+	Header PeerTrackerHeader
 	Body   ListFileResponseBody
 }
 
@@ -81,12 +87,12 @@ type ListFileResponseBody struct {
 }
 
 type FindFileRequest struct {
-	Header Header
+	Header PeerTrackerHeader
 	Body   FindFileRequestBody
 }
 
 type FindFileResponse struct {
-	Header Header
+	Header PeerTrackerHeader
 	Body   FindFileResponseBody
 }
 
@@ -100,4 +106,27 @@ type FindFileResponseBody struct {
 	FileSize int64
 	// ChunkLocations: for each (chunk) index is a set of host:port containing the chunk
 	ChunkLocations ChunkLocations
+}
+
+type DownloadChunkRequest struct {
+	Header PeerPeerHeader
+	Body   DownloadChunkRequestBody
+}
+
+type DownloadChunkResponse struct {
+	Header PeerPeerHeader
+	Body   DownloadChunkResponseBody
+}
+
+type DownloadChunkRequestBody struct {
+	FileName   string
+	Checksum   string
+	ChunkIndex int64
+}
+
+type DownloadChunkResponseBody struct {
+	Result        OperationResult
+	ChunkIndex    int64
+	ChunkData     []byte
+	ChunkChecksum string
 }

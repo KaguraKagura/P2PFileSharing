@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	PARALLEL_DOWNLOAD_WORKER_COUNT = 10
+	ParallelDownloadWorkerCount = 10
 
 	register = "register"
 	list     = "list"
@@ -19,20 +19,21 @@ const (
 	q        = "q"
 	quit     = "quit"
 
-	alreadyUsingTrackerAt          = "already using tracker at"
-	alreadyUsingHostPortAt         = "already using ip:port at"
-	availableFilesAre              = "available files are"
-	badArguments                   = "bad arguments"
-	badSha256ChecksumHexStringSize = "bad sha256 checksum hex string size"
-	badIpPortArgument              = "bad ip:port argument"
-	badTrackerResponse             = "bad tracker response"
-	noAvailableFileRightNow        = "no available file right now"
-	pleaseRegisterFirst            = "please register first"
-	registeredFilesAre             = "registered file(s) are"
-	unrecognizedCommand            = "unrecognized command"
-	unrecognizedResponseResultCode = "unrecognized response result code"
-
-	sha256ChecksumHexStringSize = 64
+	alreadyUsingTrackerAt                     = "already using tracker at"
+	alreadyUsingHostPortAt                    = "already using ip:port at"
+	availableFilesAre                         = "available files are"
+	badArguments                              = "bad arguments"
+	badIpPortArgument                         = "bad ip:port argument"
+	badTrackerResponse                        = "bad tracker response"
+	downloadedChunkIndexMismatch              = "downloaded chunk index mismatch"
+	downloadedChunkChecksumMismatch           = "downloaded chunk checksum mismatch"
+	downloadedFileChecksumMismatch            = "downloaded file checksum mismatch"
+	noAvailableFileRightNow                   = "no available file right now"
+	pleaseRegisterFirst                       = "please register first"
+	registeredFilesAre                        = "registered file(s) are"
+	unrecognizedCommand                       = "unrecognized command"
+	unrecognizedPeerPeerResponseResultCode    = "unrecognized peer peer response result code"
+	unrecognizedPeerTrackerResponseResultCode = "unrecognized peer tracker response result code"
 )
 
 var helpMessage = strings.Join([]string{

@@ -3,6 +3,8 @@ package peer
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -26,9 +28,25 @@ type localFile struct {
 	size     int64
 }
 
-type chunkToDownload struct {
+type remoteFile struct {
+	name     string
+	checksum string
+}
+
+//type chunk struct {
+//	index    int64
+//	hostPort string
+//	data     []byte
+//}
+
+type toBeDownloadedChunk struct {
 	index    int64
 	hostPort string
+}
+
+type downloadedChunk struct {
+	index int64
+	data  []byte
 }
 
 type Peer struct {
@@ -113,7 +131,7 @@ func (p *Peer) register(trackerHostPort, selfHostPort string, filepaths []string
 		return
 	}
 
-	localFiles, err := validateFilepaths(filepaths)
+	localFiles, err := makeLocalFiles(filepaths)
 	if err != nil {
 		errorLogger.Printf("%v\n", err)
 		return
@@ -126,7 +144,7 @@ func (p *Peer) register(trackerHostPort, selfHostPort string, filepaths []string
 	// prepare to talk to the tracker
 	requestId := uuid.NewString()
 	req, _ := json.Marshal(communication.RegisterRequest{
-		Header: communication.Header{
+		Header: communication.PeerTrackerHeader{
 			RequestId: requestId,
 			Operation: communication.Register,
 		},
@@ -162,7 +180,7 @@ func (p *Peer) register(trackerHostPort, selfHostPort string, filepaths []string
 		return
 	}
 
-	if err := validateResponseHeader(resp.Header, communication.Header{
+	if err := validatePeerTrackerHeader(resp.Header, communication.PeerTrackerHeader{
 		RequestId: requestId,
 		Operation: communication.Register,
 	}); err != nil {
@@ -184,7 +202,7 @@ func (p *Peer) register(trackerHostPort, selfHostPort string, filepaths []string
 		errorLogger.Printf("%s: %s\n", resp.Body.Result.Code, resp.Body.Result.Detail)
 		return
 	default:
-		errorLogger.Printf("%s %q\n", unrecognizedResponseResultCode, resp.Body.Result.Code)
+		errorLogger.Printf("%s %q\n", unrecognizedPeerTrackerResponseResultCode, resp.Body.Result.Code)
 		return
 	}
 
@@ -198,7 +216,7 @@ func (p *Peer) list() {
 
 	requestId := uuid.NewString()
 	req, _ := json.Marshal(communication.ListFileRequest{
-		Header: communication.Header{
+		Header: communication.PeerTrackerHeader{
 			RequestId: requestId,
 			Operation: communication.List,
 		},
@@ -231,7 +249,7 @@ func (p *Peer) list() {
 		return
 	}
 
-	if err := validateResponseHeader(resp.Header, communication.Header{
+	if err := validatePeerTrackerHeader(resp.Header, communication.PeerTrackerHeader{
 		RequestId: requestId,
 		Operation: communication.List,
 	}); err != nil {
@@ -258,7 +276,7 @@ func (p *Peer) list() {
 		errorLogger.Printf("%s: %s\n", resp.Body.Result.Code, resp.Body.Result.Detail)
 		return
 	default:
-		errorLogger.Printf("%s %q\n", unrecognizedResponseResultCode, resp.Body.Result.Code)
+		errorLogger.Printf("%s %q\n", unrecognizedPeerTrackerResponseResultCode, resp.Body.Result.Code)
 		return
 	}
 
@@ -269,7 +287,14 @@ func (p *Peer) find(filename, checksum string) {
 		errorLogger.Printf("%s\n", pleaseRegisterFirst)
 	}
 
-	resp, err := findFile(p, filename, checksum)
+	if len(checksum) != util.Sha256ChecksumHexStringSize {
+		errorLogger.Printf("%s", util.BadSha256ChecksumHexStringSize)
+	}
+
+	resp, err := findFile(p, remoteFile{
+		name:     filename,
+		checksum: checksum,
+	})
 	if err != nil {
 		errorLogger.Printf("%v\n", err)
 		return
@@ -294,7 +319,7 @@ func (p *Peer) find(filename, checksum string) {
 		errorLogger.Printf("%s: %s\n", resp.Body.Result.Code, resp.Body.Result.Detail)
 		return
 	default:
-		errorLogger.Printf("%s %q\n", unrecognizedResponseResultCode, resp.Body.Result.Code)
+		errorLogger.Printf("%s %q\n", unrecognizedPeerTrackerResponseResultCode, resp.Body.Result.Code)
 		return
 	}
 }
@@ -304,72 +329,152 @@ func (p *Peer) download(filename, checksum string) {
 		errorLogger.Printf("%s\n", pleaseRegisterFirst)
 	}
 
-	resp, err := findFileSuccess(p, filename, checksum)
+	if len(checksum) != util.Sha256ChecksumHexStringSize {
+		errorLogger.Printf("%s", util.BadSha256ChecksumHexStringSize)
+	}
+
+	fileToDownload := remoteFile{
+		name:     filename,
+		checksum: checksum,
+	}
+	resp, err := findFileSuccess(p, fileToDownload)
 	if err != nil {
 		errorLogger.Printf("%v\n", err)
 		return
 	}
 
-	chunkLocationsLock := sync.Mutex{}
-	chunkLocations := resp.Body.ChunkLocations
-	go func(chunkLocations communication.ChunkLocations, lock *sync.Mutex) {
-		lock.Lock()
-		defer lock.Unlock()
-		// todo: update chunkLocations
-		// todo: experiment  chunkLocations = new slice
-
-	}(chunkLocations, &chunkLocationsLock)
-
-	var workerCount = PARALLEL_DOWNLOAD_WORKER_COUNT
-	if len(resp.Body.ChunkLocations) < PARALLEL_DOWNLOAD_WORKER_COUNT {
-		workerCount = len(chunkLocations)
+	// preallocate a file
+	file, err := os.Create(filename)
+	if err != nil {
+		errorLogger.Printf("%v\n", err)
+		return
+	}
+	if err = file.Truncate(resp.Body.FileSize); err != nil {
+		errorLogger.Printf("%v\n", err)
+		return
 	}
 
-	//todo: need a file writer
-	chunkToDownloadChan := make(chan chunkToDownload, 1) //todo chan size
-	completedChunkIndexChan := make(chan int64)          //todo chan size
-
+	// context to cancel all the goroutines created from this function when file download completes or error occurs
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// chunkLocations will be updated periodically in place
+	chunkLocations := resp.Body.ChunkLocations
+	// chunkInTransmissionByIndex is a set of index of chunks in transmission
+	chunkInTransmissionByIndex := map[int64]struct{}{}
+
+	// create concurrent download workers
+	totalChunkCount := len(chunkLocations)
+	workerCount := ParallelDownloadWorkerCount
+	if totalChunkCount < ParallelDownloadWorkerCount {
+		workerCount = totalChunkCount
+	}
+	toBeDownloadedChunkChan := make(chan toBeDownloadedChunk)
+	downloadedChunkChan := make(chan downloadedChunk)
+	downloadErrorChan := make(chan error)
 	for i := 0; i < workerCount; i++ {
-		go func(ctx context.Context, need <-chan chunkToDownload, completed chan<- int64) {
+		go func(ctx context.Context, toBeDownloaded <-chan toBeDownloadedChunk, downloaded chan<- downloadedChunk, e chan<- error) {
 			for {
 				select {
 				case <-ctx.Done():
 					return
-				case chunk := <-need:
-					// todo: func downloadChunk() validate chunk checksum
-					completed <- chunk.index
+				case want := <-toBeDownloaded:
+					get, err := downloadChunk(fileToDownload, want)
+					if err != nil {
+						e <- err
+						continue
+					}
+					downloaded <- *get
 				}
 			}
-		}(ctx, chunkToDownloadChan, completedChunkIndexChan)
+		}(ctx, toBeDownloadedChunkChan, downloadedChunkChan, downloadErrorChan)
+		// assign work to the worker just created
+		c := pickChunk(chunkLocations, chunkInTransmissionByIndex)
+		toBeDownloadedChunkChan <- c
+		chunkInTransmissionByIndex[c.index] = struct{}{}
 	}
 
-	chunksDownloaded := make(map[int64]struct{}, 0)
-	for len(chunksDownloaded) != len(chunkLocations) {
-		index := <-completedChunkIndexChan
-		chunksDownloaded[index] = struct{}{}
-		chunkLocationsLock.Lock()
-		chunkToDownloadChan <- pickChunk(chunkLocations, chunksDownloaded)
-		chunkLocationsLock.Unlock()
-		//todo: more actions?
+	// update chunkLocations in place periodically in the background
+	// due to the update, accessing chunkLocations needs chunkLocationsLock from here on
+	updateInterval := 10 * time.Second
+	chunkLocationsLock := sync.Mutex{}
+	findFileErrorChan := make(chan error)
+	go func(ctx context.Context, interval time.Duration, locations *communication.ChunkLocations, lock *sync.Mutex, e chan<- error) {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				resp, err := findFileSuccess(p, fileToDownload)
+				if err != nil {
+					e <- err
+					return
+				}
+				// update locations in place
+				lock.Lock()
+				for i, location := range resp.Body.ChunkLocations {
+					(*locations)[i] = location
+				}
+				lock.Unlock()
+				e <- nil
+			}
+		}
+	}(ctx, updateInterval, &chunkLocations, &chunkLocationsLock, findFileErrorChan)
+
+	// monitor whole file download progress
+	chunksCompletedByIndex := make(map[int64]struct{})
+	for {
+		select {
+		case c := <-downloadedChunkChan:
+			delete(chunkInTransmissionByIndex, c.index)
+			chunksCompletedByIndex[c.index] = struct{}{}
+			//todo: write chunk
+
+			// whole file download completed
+			if len(chunksCompletedByIndex) == totalChunkCount {
+				checksumToVerify, err := util.Sha256FileChecksum(file)
+				if err != nil {
+					errorLogger.Printf("%v\n", err)
+				}
+				if checksumToVerify != checksum {
+					errorLogger.Printf("%v\n", downloadedFileChecksumMismatch)
+				}
+				return
+			}
+
+			// still chunks left to be downloaded
+			chunkLocationsLock.Lock()
+			newChunk := pickChunk(chunkLocations, util.UnionInt64Set(chunkInTransmissionByIndex, chunksCompletedByIndex))
+			chunkLocationsLock.Unlock()
+			toBeDownloadedChunkChan <- newChunk
+			chunkInTransmissionByIndex[newChunk.index] = struct{}{}
+		case err := <-downloadErrorChan:
+			// todo retry
+			errorLogger.Printf("%v\n", err)
+		case err := <-findFileErrorChan:
+			// todo retry
+			errorLogger.Printf("%v\n", err)
+		}
 	}
 }
 
-func findFile(p *Peer, filename, checksum string) (*communication.FindFileResponse, error) {
-	if len(checksum) != sha256ChecksumHexStringSize {
-		return nil, fmt.Errorf("%s", badSha256ChecksumHexStringSize)
+func findFile(p *Peer, file remoteFile) (*communication.FindFileResponse, error) {
+	checksum := file.checksum
+	if len(checksum) != util.Sha256ChecksumHexStringSize {
+		return nil, fmt.Errorf("%s", util.BadSha256ChecksumHexStringSize)
 	}
 
 	requestId := uuid.NewString()
 	req, _ := json.Marshal(communication.FindFileRequest{
-		Header: communication.Header{
+		Header: communication.PeerTrackerHeader{
 			RequestId: requestId,
 			Operation: communication.Find,
 		},
 		Body: communication.FindFileRequestBody{
-			FileName: filename,
+			FileName: file.name,
 			Checksum: checksum,
 		},
 	})
@@ -381,9 +486,7 @@ func findFile(p *Peer, filename, checksum string) (*communication.FindFileRespon
 		return nil, err
 	}
 	defer func(conn net.Conn) {
-		if err := conn.Close(); err != nil {
-			errorLogger.Printf("%v\n", err)
-		}
+		_ = conn.Close()
 	}(conn)
 
 	if _, err := conn.Write(req); err != nil {
@@ -397,19 +500,19 @@ func findFile(p *Peer, filename, checksum string) (*communication.FindFileRespon
 		return nil, err
 	}
 
-	if err := validateResponseHeader(resp.Header, communication.Header{
+	if err := validatePeerTrackerHeader(resp.Header, communication.PeerTrackerHeader{
 		RequestId: requestId,
 		Operation: communication.Find,
 	}); err != nil {
-		errorLogger.Printf("%v\n", err)
+		return nil, err
 	}
 
 	return &resp, nil
 }
 
 // findFileSuccess returns a FindFileResponse response with result code "Success" or else error
-func findFileSuccess(p *Peer, filename, checksum string) (*communication.FindFileResponse, error) {
-	resp, err := findFile(p, filename, checksum)
+func findFileSuccess(p *Peer, file remoteFile) (*communication.FindFileResponse, error) {
+	resp, err := findFile(p, file)
 	if err != nil {
 		return nil, err
 	}
@@ -420,6 +523,76 @@ func findFileSuccess(p *Peer, filename, checksum string) (*communication.FindFil
 	case communication.Fail:
 		return nil, fmt.Errorf("%s: %s\n", resp.Body.Result.Code, resp.Body.Result.Detail)
 	default:
-		return nil, fmt.Errorf("%s %q\n", unrecognizedResponseResultCode, resp.Body.Result.Code)
+		return nil, fmt.Errorf("%s %q\n", unrecognizedPeerTrackerResponseResultCode, resp.Body.Result.Code)
+	}
+}
+
+// downloadChunk downloads a chunk from a peer and validates the checksum
+func downloadChunk(file remoteFile, c toBeDownloadedChunk) (*downloadedChunk, error) {
+	requestId := uuid.NewString()
+	req, _ := json.Marshal(communication.DownloadChunkRequest{
+		Header: communication.PeerPeerHeader{
+			RequestId: requestId,
+			Operation: communication.DownloadChunk,
+		},
+		Body: communication.DownloadChunkRequestBody{
+			FileName:   file.name,
+			Checksum:   file.checksum,
+			ChunkIndex: c.index,
+		},
+	})
+
+	// start to talk to the peer
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := dialer.Dial("tcp", c.hostPort)
+	if err != nil {
+		return nil, err
+	}
+	defer func(conn net.Conn) {
+		_ = conn.Close()
+	}(conn)
+
+	if _, err := conn.Write(req); err != nil {
+		return nil, err
+	}
+
+	// get response from peer
+	var resp communication.DownloadChunkResponse
+	d := json.NewDecoder(conn)
+	if err := d.Decode(&resp); err != nil {
+		return nil, err
+	}
+
+	if err := validatePeerPeerHeader(resp.Header, communication.PeerPeerHeader{
+		RequestId: requestId,
+		Operation: communication.DownloadChunk,
+	}); err != nil {
+		return nil, err
+	}
+
+	switch resp.Body.Result.Code {
+	case communication.Success:
+		index := resp.Body.ChunkIndex
+		data := resp.Body.ChunkData
+		if index != c.index {
+			return nil, fmt.Errorf("%s: expect %q get %q",
+				downloadedChunkIndexMismatch, c.index, resp.Body.ChunkIndex)
+		}
+
+		digest := sha256.Sum256(data)
+		checksum := hex.EncodeToString(digest[:])
+		if checksum != resp.Body.ChunkChecksum {
+			return nil, fmt.Errorf("%s: expect %q get %q",
+				downloadedChunkChecksumMismatch, resp.Body.ChunkChecksum, checksum)
+		}
+
+		return &downloadedChunk{
+			index: index,
+			data:  data,
+		}, nil
+	case communication.Fail:
+		return nil, fmt.Errorf("%s: %s\n", resp.Body.Result.Code, resp.Body.Result.Detail)
+	default:
+		return nil, fmt.Errorf("%s %q\n", unrecognizedPeerPeerResponseResultCode, resp.Body.Result.Code)
 	}
 }

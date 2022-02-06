@@ -187,14 +187,19 @@ func (t *Tracker) handleRegister(req communication.RegisterRequest) ([]byte, err
 	if b.FilesToShare != nil {
 		remoteFileStatusLock.Lock()
 		for _, fileToShare := range b.FilesToShare {
+			checksum := fileToShare.Checksum
+			if len(checksum) != util.Sha256ChecksumHexStringSize {
+				return nil, fmt.Errorf("%s", util.BadSha256ChecksumHexStringSize)
+			}
+
 			f := remoteFile{
 				name:     fileToShare.Name,
-				checksum: fileToShare.Checksum,
+				checksum: checksum,
 			}
 			// if file has not been recorded
 			if status, ok := tracker.remoteFileLocations[f]; !ok {
 				locations := make([]map[string]struct{}, 0)
-				for i := 0; i < util.CalculateNumberOfChunks(fileToShare.Size); i++ {
+				for i := 0; i < communication.CalculateNumberOfChunks(fileToShare.Size); i++ {
 					locations = append(locations, map[string]struct{}{
 						b.HostPort: {},
 					})
@@ -204,7 +209,7 @@ func (t *Tracker) handleRegister(req communication.RegisterRequest) ([]byte, err
 					chunkLocations: locations,
 				}
 			} else { // file has been recorded
-				for i := 0; i < util.CalculateNumberOfChunks(status.size); i++ {
+				for i := 0; i < communication.CalculateNumberOfChunks(status.size); i++ {
 					hostPortSet := status.chunkLocations[i]
 					if _, ok := hostPortSet[b.HostPort]; !ok {
 						hostPortSet[b.HostPort] = struct{}{}
@@ -261,10 +266,15 @@ func (t *Tracker) handleFind(req communication.FindFileRequest) ([]byte, error) 
 	infoLogger.Printf("%s:\n", handlingRequest)
 	util.PrettyLogStruct(genericLogger, req)
 
+	checksum := req.Body.Checksum
+	if len(checksum) != util.Sha256ChecksumHexStringSize {
+		return nil, fmt.Errorf("%s", util.BadSha256ChecksumHexStringSize)
+	}
+
 	remoteFileStatusLock.Lock()
 	status, ok := t.remoteFileLocations[remoteFile{
 		name:     req.Body.FileName,
-		checksum: req.Body.Checksum,
+		checksum: checksum,
 	}]
 	remoteFileStatusLock.Unlock()
 	if !ok {

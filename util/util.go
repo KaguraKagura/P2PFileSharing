@@ -11,11 +11,14 @@ import (
 
 const (
 	AppName = "p2pFileSharing"
+
+	BadSha256ChecksumHexStringSize = "bad sha256 checksum hex string size"
+	Sha256ChecksumHexStringSize    = 64
 )
 
-// HashFileSHA256 computes sha256 of the file. It assumes f is valid
-func HashFileSHA256(f *os.File) (string, error) {
-	buffer := make([]byte, 10*1024*1024)
+// Sha256FileChecksum computes sha256 of the file. It assumes f is valid
+func Sha256FileChecksum(f *os.File) (string, error) {
+	buffer := make([]byte, 100*1024*1024)
 
 	hash := sha256.New()
 	for {
@@ -40,7 +43,14 @@ func PrettyLogStruct(logger *log.Logger, v interface{}) {
 	logger.Printf("%s", prettyString)
 }
 
-func CalculateNumberOfChunks(fileSize int64) int {
-	// todo
-	return 5
+// UnionInt64Set returns the union of the 2 sets in a new non-nil set
+func UnionInt64Set(a, b map[int64]struct{}) map[int64]struct{} {
+	result := make(map[int64]struct{})
+	for k, v := range a {
+		result[k] = v
+	}
+	for k, v := range b {
+		result[k] = v
+	}
+	return result
 }
