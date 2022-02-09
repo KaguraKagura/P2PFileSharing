@@ -25,7 +25,7 @@ type remoteFileStatus struct {
 	chunkLocations []map[string]struct{}
 }
 
-type Tracker struct {
+type tracker struct {
 	hostPort  string
 	listener  *net.Listener
 	listening bool
@@ -34,7 +34,7 @@ type Tracker struct {
 }
 
 var (
-	tracker              Tracker
+	t                    tracker
 	remoteFileStatusLock sync.Mutex
 
 	genericLogger = log.New(os.Stdout, "", 0)
@@ -54,20 +54,21 @@ func Start() {
 		}
 
 		args := strings.Split(command, " ")
+		//todo: sanitize checksum, hostPort **and** in peer.go
 		switch args[0] {
-		case start:
+		case startCmd:
 			if len(args) != 2 {
 				errorLogger.Printf("%s. %s\n", badArguments, helpPrompt)
 				continue
 			}
-			tracker.start(args[1])
-		case h:
+			t.start(args[1])
+		case hCmd:
 			fallthrough
-		case help:
+		case helpCmd:
 			genericLogger.Printf("%s\n", helpMessage)
-		case q:
+		case qCmd:
 			fallthrough
-		case quit:
+		case quitCmd:
 			os.Exit(0)
 		default:
 			errorLogger.Printf("%s %q. %s\n", unrecognizedCommand, args[0], helpPrompt)
@@ -75,7 +76,7 @@ func Start() {
 	}
 }
 
-func (t *Tracker) start(hostPort string) {
+func (t *tracker) start(hostPort string) {
 	if t.listening == true {
 		infoLogger.Printf("%s %s\n", trackerAlreadyRunningAt, t.hostPort)
 		return
@@ -98,12 +99,12 @@ func (t *Tracker) start(hostPort string) {
 	t.remoteFileLocations = make(map[remoteFile]remoteFileStatus)
 	infoLogger.Printf("%s %s\n", trackerOnlineListeningOn, hostPort)
 
-	go serve()
+	go serve(t)
 }
 
-func serve() {
+func serve(t *tracker) {
 	for {
-		conn, err := (*tracker.listener).Accept()
+		conn, err := (*t.listener).Accept()
 		if err != nil {
 			errorLogger.Printf("%v\n", err)
 			continue
@@ -111,9 +112,7 @@ func serve() {
 
 		go func() {
 			defer func() {
-				if err := conn.Close(); err != nil {
-					errorLogger.Printf("%v\n", err)
-				}
+				_ = conn.Close()
 			}()
 
 			var req genericRequest
@@ -128,12 +127,23 @@ func serve() {
 				err  error
 			)
 			switch req.Header.Operation {
-			case communication.Register:
-				var body communication.RegisterRequestBody
+			case communication.RegisterChunk:
+				var body communication.RegisterChunkRequestBody
 				if err = json.Unmarshal(req.Body, &body); err != nil {
 					break
 				}
-				if resp, err = tracker.handleRegister(communication.RegisterRequest{
+				if resp, err = t.handleRegisterChunk(communication.RegisterChunkRequest{
+					Header: req.Header,
+					Body:   body,
+				}); err != nil {
+					break
+				}
+			case communication.RegisterFile:
+				var body communication.RegisterFileRequestBody
+				if err = json.Unmarshal(req.Body, &body); err != nil {
+					break
+				}
+				if resp, err = t.handleRegisterFile(communication.RegisterFileRequest{
 					Header: req.Header,
 					Body:   body,
 				}); err != nil {
@@ -144,7 +154,7 @@ func serve() {
 				if err = json.Unmarshal(req.Body, &body); err != nil {
 					break
 				}
-				if resp, err = tracker.handleList(communication.ListFileRequest{
+				if resp, err = t.handleList(communication.ListFileRequest{
 					Header: req.Header,
 					Body:   body,
 				}); err != nil {
@@ -155,7 +165,7 @@ func serve() {
 				if err = json.Unmarshal(req.Body, &body); err != nil {
 					break
 				}
-				if resp, err = tracker.handleFind(communication.FindFileRequest{
+				if resp, err = t.handleFind(communication.FindFileRequest{
 					Header: req.Header,
 					Body:   body,
 				}); err != nil {
@@ -177,9 +187,47 @@ func serve() {
 	}
 }
 
-// handleRegister returns a valid response and nil if the request is successfully served else returns nil and error
+// handleRegisterChunk returns a valid response and nil if the request is successfully served else returns nil and error
 // the []byte return value has been encoded into a raw json message
-func (t *Tracker) handleRegister(req communication.RegisterRequest) ([]byte, error) {
+func (t *tracker) handleRegisterChunk(req communication.RegisterChunkRequest) ([]byte, error) {
+	infoLogger.Printf("%s:\n", handlingRequest)
+	util.PrettyLogStruct(genericLogger, req)
+
+	remoteFile := remoteFile{
+		name:     req.Body.Chunk.FileName,
+		checksum: req.Body.Chunk.FileChecksum,
+	}
+	chunkIndex := req.Body.Chunk.ChunkIndex
+
+	remoteFileStatusLock.Lock()
+	// if file has not been recorded, i.e. never registered
+	if status, ok := t.remoteFileLocations[remoteFile]; !ok {
+		return nil, fmt.Errorf("%s", fileDoesNotExist)
+	} else { // file has been recorded
+		status.chunkLocations[chunkIndex][req.Body.HostPort] = struct{}{}
+	}
+	remoteFileStatusLock.Unlock()
+
+	resp, _ := json.Marshal(communication.RegisterChunkResponse{
+		Header: req.Header,
+		Body: communication.RegisterChunkResponseBody{
+			Result: communication.OperationResult{
+				Code:   communication.Success,
+				Detail: chunkRegisterIsSuccessful,
+			},
+			RegisteredChunk: communication.P2PChunk{
+				FileName:     remoteFile.name,
+				FileChecksum: remoteFile.checksum,
+				ChunkIndex:   chunkIndex,
+			},
+		},
+	})
+	return resp, nil
+}
+
+// handleRegisterFile returns a valid response and nil if the request is successfully served else returns nil and error
+// the []byte return value has been encoded into a raw json message
+func (t *tracker) handleRegisterFile(req communication.RegisterFileRequest) ([]byte, error) {
 	infoLogger.Printf("%s:\n", handlingRequest)
 	util.PrettyLogStruct(genericLogger, req)
 
@@ -197,14 +245,15 @@ func (t *Tracker) handleRegister(req communication.RegisterRequest) ([]byte, err
 				checksum: checksum,
 			}
 			// if file has not been recorded
-			if status, ok := tracker.remoteFileLocations[f]; !ok {
-				locations := make([]map[string]struct{}, 0)
-				for i := 0; i < communication.CalculateNumberOfChunks(fileToShare.Size); i++ {
+			if status, ok := t.remoteFileLocations[f]; !ok {
+				chunkCount := communication.CalculateNumberOfChunks(fileToShare.Size)
+				locations := make([]map[string]struct{}, 0, chunkCount)
+				for i := 0; i < chunkCount; i++ {
 					locations = append(locations, map[string]struct{}{
 						b.HostPort: {},
 					})
 				}
-				tracker.remoteFileLocations[f] = remoteFileStatus{
+				t.remoteFileLocations[f] = remoteFileStatus{
 					size:           fileToShare.Size,
 					chunkLocations: locations,
 				}
@@ -220,12 +269,12 @@ func (t *Tracker) handleRegister(req communication.RegisterRequest) ([]byte, err
 		remoteFileStatusLock.Unlock()
 	}
 
-	resp, _ := json.Marshal(communication.RegisterResponse{
+	resp, _ := json.Marshal(communication.RegisterFileResponse{
 		Header: req.Header,
-		Body: communication.RegisterResponseBody{
+		Body: communication.RegisterFileResponseBody{
 			Result: communication.OperationResult{
 				Code:   communication.Success,
-				Detail: registerIsSuccessful,
+				Detail: fileRegisterIsSuccessful,
 			},
 			RegisteredFiles: b.FilesToShare,
 		},
@@ -233,7 +282,7 @@ func (t *Tracker) handleRegister(req communication.RegisterRequest) ([]byte, err
 	return resp, nil
 }
 
-func (t *Tracker) handleList(req communication.ListFileRequest) ([]byte, error) {
+func (t *tracker) handleList(req communication.ListFileRequest) ([]byte, error) {
 	infoLogger.Printf("%s:\n", handlingRequest)
 	util.PrettyLogStruct(genericLogger, req)
 
@@ -262,7 +311,7 @@ func (t *Tracker) handleList(req communication.ListFileRequest) ([]byte, error) 
 	return resp, nil
 }
 
-func (t *Tracker) handleFind(req communication.FindFileRequest) ([]byte, error) {
+func (t *tracker) handleFind(req communication.FindFileRequest) ([]byte, error) {
 	infoLogger.Printf("%s:\n", handlingRequest)
 	util.PrettyLogStruct(genericLogger, req)
 

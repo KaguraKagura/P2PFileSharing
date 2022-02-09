@@ -20,10 +20,18 @@ func makeFailedOperationResponse(header communication.PeerTrackerHeader, e error
 
 	var resp []byte
 	switch header.Operation {
-	case communication.Register:
-		resp, _ = json.Marshal(communication.RegisterResponse{
+	case communication.RegisterChunk:
+		resp, _ = json.Marshal(communication.RegisterChunkResponse{
 			Header: header,
-			Body: communication.RegisterResponseBody{
+			Body: communication.RegisterChunkResponseBody{
+				Result:          result,
+				RegisteredChunk: communication.P2PChunk{},
+			},
+		})
+	case communication.RegisterFile:
+		resp, _ = json.Marshal(communication.RegisterFileResponse{
+			Header: header,
+			Body: communication.RegisterFileResponseBody{
 				Result:          result,
 				RegisteredFiles: nil,
 			},
@@ -45,7 +53,7 @@ func makeFailedOperationResponse(header communication.PeerTrackerHeader, e error
 			},
 		})
 
-	// todo other cases
+	// todo: failed response for other operations
 
 	default:
 		resp, _ = json.Marshal(communication.GenericResponse{

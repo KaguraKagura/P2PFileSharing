@@ -3,9 +3,10 @@ package communication
 const (
 	ChunkSize = 1024 * 1024
 
-	Register PeerTrackerOperation = "register"
-	List     PeerTrackerOperation = "list"
-	Find     PeerTrackerOperation = "find"
+	RegisterChunk PeerTrackerOperation = "register_chunk"
+	RegisterFile  PeerTrackerOperation = "register_file"
+	List          PeerTrackerOperation = "list"
+	Find          PeerTrackerOperation = "find"
 
 	DownloadChunk PeerPeerOperation = "download_chunk"
 
@@ -22,6 +23,12 @@ type P2PFile struct {
 	Name     string
 	Checksum string
 	Size     int64
+}
+
+type P2PChunk struct {
+	FileName     string
+	FileChecksum string
+	ChunkIndex   int64
 }
 
 type PeerTrackerHeader struct {
@@ -48,24 +55,44 @@ type GenericResponseBody struct {
 	Result OperationResult
 }
 
-type RegisterRequest struct {
+type RegisterFileRequest struct {
 	Header PeerTrackerHeader
-	Body   RegisterRequestBody
+	Body   RegisterFileRequestBody
 }
 
-type RegisterResponse struct {
+type RegisterFileResponse struct {
 	Header PeerTrackerHeader
-	Body   RegisterResponseBody
+	Body   RegisterFileResponseBody
 }
 
-type RegisterRequestBody struct {
+type RegisterFileRequestBody struct {
 	HostPort     string
 	FilesToShare []P2PFile
 }
 
-type RegisterResponseBody struct {
+type RegisterFileResponseBody struct {
 	Result          OperationResult
 	RegisteredFiles []P2PFile
+}
+
+type RegisterChunkRequest struct {
+	Header PeerTrackerHeader
+	Body   RegisterChunkRequestBody
+}
+
+type RegisterChunkResponse struct {
+	Header PeerTrackerHeader
+	Body   RegisterChunkResponseBody
+}
+
+type RegisterChunkRequestBody struct {
+	HostPort string
+	Chunk    P2PChunk
+}
+
+type RegisterChunkResponseBody struct {
+	Result          OperationResult
+	RegisteredChunk P2PChunk
 }
 
 type ListFileRequest struct {
@@ -119,9 +146,9 @@ type DownloadChunkResponse struct {
 }
 
 type DownloadChunkRequestBody struct {
-	FileName   string
-	Checksum   string
-	ChunkIndex int64
+	FileName     string
+	FileChecksum string
+	ChunkIndex   int64
 }
 
 type DownloadChunkResponseBody struct {
