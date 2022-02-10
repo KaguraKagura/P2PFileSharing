@@ -19,23 +19,25 @@ type remoteFile struct {
 	checksum string
 }
 
-type remoteFileStatus struct {
-	size int64
-	// chunkLocations: for each (chunk) index is a set of host:port containing the chunk
-	chunkLocations []map[string]struct{}
+type p2pFileStatus struct {
+	size           int64
+	chunkLocations communication.ChunkLocations
+}
+
+type p2pFileLocations struct {
+	locations map[remoteFile]p2pFileStatus
+	mu        sync.Mutex
 }
 
 type tracker struct {
 	hostPort  string
-	listener  *net.Listener
 	listening bool
 
-	remoteFileLocations map[remoteFile]remoteFileStatus
+	p2pFileLocations p2pFileLocations
 }
 
 var (
-	t                    tracker
-	remoteFileStatusLock sync.Mutex
+	t tracker
 
 	genericLogger = log.New(os.Stdout, "", 0)
 	infoLogger    = log.New(os.Stdout, "INFO: ", 0)
@@ -45,168 +47,187 @@ var (
 func Start() {
 	genericLogger.Println(welcomeMessage)
 
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		command, _ := reader.ReadString('\n')
-		command = strings.TrimSpace(command)
-		if command == "" {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if line == "" {
 			continue
 		}
 
-		args := strings.Split(command, " ")
+		var (
+			result string
+			err    error
+		)
+		args := strings.Fields(line)
 		//todo: sanitize checksum, hostPort **and** in peer.go
 		switch args[0] {
 		case startCmd:
 			if len(args) != 2 {
-				errorLogger.Printf("%s. %s\n", badArguments, helpPrompt)
-				continue
+				err = fmt.Errorf("%s. %s", badArguments, helpPrompt)
+				break
 			}
-			t.start(args[1])
+			err = t.start(args[1])
 		case hCmd:
 			fallthrough
 		case helpCmd:
-			genericLogger.Printf("%s\n", helpMessage)
+			result = helpMessage
 		case qCmd:
 			fallthrough
 		case quitCmd:
+			genericLogger.Printf("%s!", goodbye)
 			os.Exit(0)
 		default:
-			errorLogger.Printf("%s %q. %s\n", unrecognizedCommand, args[0], helpPrompt)
+			err = fmt.Errorf("%s %q", unrecognizedCommand, args[0])
+		}
+
+		if err != nil {
+			errorLogger.Printf("%v", err)
+		} else {
+			genericLogger.Printf("%s", result)
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		log.Fatal(err)
+	}
+
+	genericLogger.Printf("%s!", goodbye)
+	os.Exit(0)
 }
 
-func (t *tracker) start(hostPort string) {
+func (t *tracker) start(hostPort string) error {
 	if t.listening == true {
-		infoLogger.Printf("%s %s\n", trackerAlreadyRunningAt, t.hostPort)
-		return
+		return fmt.Errorf("%s %s\n", trackerAlreadyRunningAt, t.hostPort)
 	}
 
 	if _, _, err := net.SplitHostPort(hostPort); err != nil {
-		errorLogger.Printf("%s. %s\n", badIpPortArgument, helpPrompt)
-		return
+		return fmt.Errorf("%v. %s\n", err, helpPrompt)
 	}
-
 	t.hostPort = hostPort
 
 	l, err := net.Listen("tcp", hostPort)
 	if err != nil {
-		errorLogger.Printf("%v\n", err)
-		return
+		return err
 	}
-	t.listener = &l
 	t.listening = true
-	t.remoteFileLocations = make(map[remoteFile]remoteFileStatus)
-	infoLogger.Printf("%s %s\n", trackerOnlineListeningOn, hostPort)
 
-	go serve(t)
-}
-
-func serve(t *tracker) {
-	for {
-		conn, err := (*t.listener).Accept()
-		if err != nil {
-			errorLogger.Printf("%v\n", err)
-			continue
-		}
-
-		go func() {
-			defer func() {
-				_ = conn.Close()
-			}()
-
-			var req genericRequest
-			d := json.NewDecoder(conn)
-			if err := d.Decode(&req); err != nil {
-				errorLogger.Printf("%v\n", err)
-				return
-			}
-
-			var (
-				resp []byte
-				err  error
-			)
-			switch req.Header.Operation {
-			case communication.RegisterChunk:
-				var body communication.RegisterChunkRequestBody
-				if err = json.Unmarshal(req.Body, &body); err != nil {
-					break
-				}
-				if resp, err = t.handleRegisterChunk(communication.RegisterChunkRequest{
-					Header: req.Header,
-					Body:   body,
-				}); err != nil {
-					break
-				}
-			case communication.RegisterFile:
-				var body communication.RegisterFileRequestBody
-				if err = json.Unmarshal(req.Body, &body); err != nil {
-					break
-				}
-				if resp, err = t.handleRegisterFile(communication.RegisterFileRequest{
-					Header: req.Header,
-					Body:   body,
-				}); err != nil {
-					break
-				}
-			case communication.List:
-				var body communication.ListFileRequestBody
-				if err = json.Unmarshal(req.Body, &body); err != nil {
-					break
-				}
-				if resp, err = t.handleList(communication.ListFileRequest{
-					Header: req.Header,
-					Body:   body,
-				}); err != nil {
-					break
-				}
-			case communication.Find:
-				var body communication.FindFileRequestBody
-				if err = json.Unmarshal(req.Body, &body); err != nil {
-					break
-				}
-				if resp, err = t.handleFind(communication.FindFileRequest{
-					Header: req.Header,
-					Body:   body,
-				}); err != nil {
-					break
-				}
-			default:
-				err = fmt.Errorf("%s %q.\n", unrecognizedPeerTrackerOperation, req.Header.Operation)
-			}
-
-			if err != nil {
-				errorLogger.Printf("%v\n", err)
-				resp = makeFailedOperationResponse(req.Header, err)
-			}
-
-			if _, err := conn.Write(resp); err != nil {
-				errorLogger.Printf("%v\n", err)
-			}
-		}()
+	t.p2pFileLocations = p2pFileLocations{
+		locations: make(map[remoteFile]p2pFileStatus),
+		mu:        sync.Mutex{},
 	}
+
+	infoLogger.Printf("%s %s", trackerOnlineListeningOn, hostPort)
+
+	// start serving requests
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				errorLogger.Printf("%v", err)
+				continue
+			}
+
+			go func() {
+				defer func() {
+					_ = conn.Close()
+				}()
+
+				var (
+					resp []byte
+					err  error
+				)
+
+				var req genericRequest
+				d := json.NewDecoder(conn)
+				err = d.Decode(&req)
+				if err == nil {
+					switch req.Header.Operation {
+					case communication.RegisterChunk:
+						var body communication.RegisterChunkRequestBody
+						if err = json.Unmarshal(req.Body, &body); err != nil {
+							break
+						}
+						if resp, err = t.handleRegisterChunk(communication.RegisterChunkRequest{
+							Header: req.Header,
+							Body:   body,
+						}); err != nil {
+							break
+						}
+					case communication.RegisterFile:
+						var body communication.RegisterFileRequestBody
+						if err = json.Unmarshal(req.Body, &body); err != nil {
+							break
+						}
+						if resp, err = t.handleRegisterFile(communication.RegisterFileRequest{
+							Header: req.Header,
+							Body:   body,
+						}); err != nil {
+							break
+						}
+					case communication.List:
+						var body communication.ListFileRequestBody
+						if err = json.Unmarshal(req.Body, &body); err != nil {
+							break
+						}
+						if resp, err = t.handleList(communication.ListFileRequest{
+							Header: req.Header,
+							Body:   body,
+						}); err != nil {
+							break
+						}
+					case communication.Find:
+						var body communication.FindFileRequestBody
+						if err = json.Unmarshal(req.Body, &body); err != nil {
+							break
+						}
+						if resp, err = t.handleFind(communication.FindFileRequest{
+							Header: req.Header,
+							Body:   body,
+						}); err != nil {
+							break
+						}
+					default:
+						err = fmt.Errorf("%s %q.\n", unrecognizedPeerTrackerOperation, req.Header.Operation)
+					}
+				}
+
+				if err != nil {
+					errorLogger.Printf("%v", err)
+					resp = makeFailedOperationResponse(req.Header, err)
+				}
+
+				if _, err := conn.Write(resp); err != nil {
+					errorLogger.Printf("%v", err)
+				}
+			}()
+		}
+	}()
+
+	return nil
 }
 
 // handleRegisterChunk returns a valid response and nil if the request is successfully served else returns nil and error
 // the []byte return value has been encoded into a raw json message
 func (t *tracker) handleRegisterChunk(req communication.RegisterChunkRequest) ([]byte, error) {
-	infoLogger.Printf("%s:\n", handlingRequest)
-	util.PrettyLogStruct(genericLogger, req)
+	infoLogger.Printf("%s:", handlingRequest)
+	genericLogger.Printf("%s", util.StructToPrettyString(req))
 
-	remoteFile := remoteFile{
+	file := remoteFile{
 		name:     req.Body.Chunk.FileName,
 		checksum: req.Body.Chunk.FileChecksum,
 	}
 	chunkIndex := req.Body.Chunk.ChunkIndex
 
-	remoteFileStatusLock.Lock()
+	t.p2pFileLocations.mu.Lock()
+
 	// if file has not been recorded, i.e. never registered
-	if status, ok := t.remoteFileLocations[remoteFile]; !ok {
+	if status, ok := t.p2pFileLocations.locations[file]; !ok {
 		return nil, fmt.Errorf("%s", fileDoesNotExist)
 	} else { // file has been recorded
 		status.chunkLocations[chunkIndex][req.Body.HostPort] = struct{}{}
 	}
-	remoteFileStatusLock.Unlock()
+
+	t.p2pFileLocations.mu.Unlock()
 
 	resp, _ := json.Marshal(communication.RegisterChunkResponse{
 		Header: req.Header,
@@ -216,8 +237,8 @@ func (t *tracker) handleRegisterChunk(req communication.RegisterChunkRequest) ([
 				Detail: chunkRegisterIsSuccessful,
 			},
 			RegisteredChunk: communication.P2PChunk{
-				FileName:     remoteFile.name,
-				FileChecksum: remoteFile.checksum,
+				FileName:     file.name,
+				FileChecksum: file.checksum,
 				ChunkIndex:   chunkIndex,
 			},
 		},
@@ -228,32 +249,34 @@ func (t *tracker) handleRegisterChunk(req communication.RegisterChunkRequest) ([
 // handleRegisterFile returns a valid response and nil if the request is successfully served else returns nil and error
 // the []byte return value has been encoded into a raw json message
 func (t *tracker) handleRegisterFile(req communication.RegisterFileRequest) ([]byte, error) {
-	infoLogger.Printf("%s:\n", handlingRequest)
-	util.PrettyLogStruct(genericLogger, req)
+	infoLogger.Printf("%s:", handlingRequest)
+	genericLogger.Printf("%s", util.StructToPrettyString(req))
 
 	b := req.Body
+
 	if b.FilesToShare != nil {
-		remoteFileStatusLock.Lock()
+		t.p2pFileLocations.mu.Lock()
+
 		for _, fileToShare := range b.FilesToShare {
 			checksum := fileToShare.Checksum
 			if len(checksum) != util.Sha256ChecksumHexStringSize {
 				return nil, fmt.Errorf("%s", util.BadSha256ChecksumHexStringSize)
 			}
 
-			f := remoteFile{
+			file := remoteFile{
 				name:     fileToShare.Name,
 				checksum: checksum,
 			}
 			// if file has not been recorded
-			if status, ok := t.remoteFileLocations[f]; !ok {
+			if status, ok := t.p2pFileLocations.locations[file]; !ok {
 				chunkCount := communication.CalculateNumberOfChunks(fileToShare.Size)
-				locations := make([]map[string]struct{}, 0, chunkCount)
+				locations := make(communication.ChunkLocations, 0, chunkCount)
 				for i := 0; i < chunkCount; i++ {
 					locations = append(locations, map[string]struct{}{
 						b.HostPort: {},
 					})
 				}
-				t.remoteFileLocations[f] = remoteFileStatus{
+				t.p2pFileLocations.locations[file] = p2pFileStatus{
 					size:           fileToShare.Size,
 					chunkLocations: locations,
 				}
@@ -266,7 +289,8 @@ func (t *tracker) handleRegisterFile(req communication.RegisterFileRequest) ([]b
 				}
 			}
 		}
-		remoteFileStatusLock.Unlock()
+
+		t.p2pFileLocations.mu.Unlock()
 	}
 
 	resp, _ := json.Marshal(communication.RegisterFileResponse{
@@ -283,19 +307,22 @@ func (t *tracker) handleRegisterFile(req communication.RegisterFileRequest) ([]b
 }
 
 func (t *tracker) handleList(req communication.ListFileRequest) ([]byte, error) {
-	infoLogger.Printf("%s:\n", handlingRequest)
-	util.PrettyLogStruct(genericLogger, req)
+	infoLogger.Printf("%s:", handlingRequest)
+	genericLogger.Printf("%s", util.StructToPrettyString(req))
 
 	var p2pFiles []communication.P2PFile
-	remoteFileStatusLock.Lock()
-	for fileID, stat := range t.remoteFileLocations {
+
+	t.p2pFileLocations.mu.Lock()
+
+	for fileID, stat := range t.p2pFileLocations.locations {
 		p2pFiles = append(p2pFiles, communication.P2PFile{
 			Name:     fileID.name,
 			Checksum: fileID.checksum,
 			Size:     stat.size,
 		})
 	}
-	remoteFileStatusLock.Unlock()
+
+	t.p2pFileLocations.mu.Unlock()
 
 	resp, _ := json.Marshal(communication.ListFileResponse{
 		Header: req.Header,
@@ -312,20 +339,21 @@ func (t *tracker) handleList(req communication.ListFileRequest) ([]byte, error) 
 }
 
 func (t *tracker) handleFind(req communication.FindFileRequest) ([]byte, error) {
-	infoLogger.Printf("%s:\n", handlingRequest)
-	util.PrettyLogStruct(genericLogger, req)
+	infoLogger.Printf("%s:", handlingRequest)
+	genericLogger.Printf("%s", util.StructToPrettyString(req))
 
 	checksum := req.Body.Checksum
 	if len(checksum) != util.Sha256ChecksumHexStringSize {
 		return nil, fmt.Errorf("%s", util.BadSha256ChecksumHexStringSize)
 	}
 
-	remoteFileStatusLock.Lock()
-	status, ok := t.remoteFileLocations[remoteFile{
+	t.p2pFileLocations.mu.Lock()
+
+	status, ok := t.p2pFileLocations.locations[remoteFile{
 		name:     req.Body.FileName,
 		checksum: checksum,
 	}]
-	remoteFileStatusLock.Unlock()
+
 	if !ok {
 		return nil, fmt.Errorf("%s", fileDoesNotExist)
 	}
@@ -341,6 +369,8 @@ func (t *tracker) handleFind(req communication.FindFileRequest) ([]byte, error) 
 			ChunkLocations: status.chunkLocations,
 		},
 	})
+
+	t.p2pFileLocations.mu.Unlock()
 
 	return resp, nil
 }

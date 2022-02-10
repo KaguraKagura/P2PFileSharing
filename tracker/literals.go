@@ -15,11 +15,11 @@ const (
 	quitCmd  = "quit"
 
 	badArguments                     = "bad arguments"
-	badIpPortArgument                = "bad ip:port argument"
 	chunkRegisterIsSuccessful        = "chunk register is successful"
 	fileDoesNotExist                 = "file does not exist"
 	fileIsFound                      = "file is found"
 	fileRegisterIsSuccessful         = "file register is successful"
+	goodbye                          = "goodbye"
 	handlingRequest                  = "handling request"
 	lookUpFileListIsSuccessful       = "look up file list is successful"
 	trackerAlreadyRunningAt          = "tracker is already running at"

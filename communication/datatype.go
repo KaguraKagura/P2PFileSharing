@@ -14,10 +14,13 @@ const (
 	Fail    = "fail"
 )
 
-type PeerTrackerOperation string
-type PeerPeerOperation string
-type OperationResultCode string
+// ChunkLocations for each (chunk) index is a set of host:port containing the chunk
 type ChunkLocations []map[string]struct{}
+type OperationResultCode string
+type PeerPeerOperation string
+type PeerTrackerOperation string
+
+// general
 
 type P2PFile struct {
 	Name     string
@@ -31,14 +34,22 @@ type P2PChunk struct {
 	ChunkIndex   int64
 }
 
-type PeerTrackerHeader struct {
-	RequestId string
-	Operation PeerTrackerOperation
+type GenericPeerPeerResponse struct {
+	Header PeerPeerHeader
+	Body   GenericPeerPeerResponseBody
 }
 
-type PeerPeerHeader struct {
-	RequestId string
-	Operation PeerPeerOperation
+type GenericPeerPeerResponseBody struct {
+	Result OperationResult
+}
+
+type GenericPeerTrackerResponse struct {
+	Header PeerTrackerHeader
+	Body   GenericPeerTrackerResponseBody
+}
+
+type GenericPeerTrackerResponseBody struct {
+	Result OperationResult
 }
 
 type OperationResult struct {
@@ -46,72 +57,17 @@ type OperationResult struct {
 	Detail string
 }
 
-type GenericResponse struct {
-	Header PeerTrackerHeader
-	Body   GenericResponseBody
+type PeerPeerHeader struct {
+	RequestId string
+	Operation PeerPeerOperation
 }
 
-type GenericResponseBody struct {
-	Result OperationResult
+type PeerTrackerHeader struct {
+	RequestId string
+	Operation PeerTrackerOperation
 }
 
-type RegisterFileRequest struct {
-	Header PeerTrackerHeader
-	Body   RegisterFileRequestBody
-}
-
-type RegisterFileResponse struct {
-	Header PeerTrackerHeader
-	Body   RegisterFileResponseBody
-}
-
-type RegisterFileRequestBody struct {
-	HostPort     string
-	FilesToShare []P2PFile
-}
-
-type RegisterFileResponseBody struct {
-	Result          OperationResult
-	RegisteredFiles []P2PFile
-}
-
-type RegisterChunkRequest struct {
-	Header PeerTrackerHeader
-	Body   RegisterChunkRequestBody
-}
-
-type RegisterChunkResponse struct {
-	Header PeerTrackerHeader
-	Body   RegisterChunkResponseBody
-}
-
-type RegisterChunkRequestBody struct {
-	HostPort string
-	Chunk    P2PChunk
-}
-
-type RegisterChunkResponseBody struct {
-	Result          OperationResult
-	RegisteredChunk P2PChunk
-}
-
-type ListFileRequest struct {
-	Header PeerTrackerHeader
-	Body   ListFileRequestBody
-}
-
-type ListFileResponse struct {
-	Header PeerTrackerHeader
-	Body   ListFileResponseBody
-}
-
-type ListFileRequestBody struct {
-}
-
-type ListFileResponseBody struct {
-	Result OperationResult
-	Files  []P2PFile
-}
+// PeerTrackerOperation
 
 type FindFileRequest struct {
 	Header PeerTrackerHeader
@@ -134,6 +90,66 @@ type FindFileResponseBody struct {
 	// ChunkLocations: for each (chunk) index is a set of host:port containing the chunk
 	ChunkLocations ChunkLocations
 }
+
+type ListFileRequest struct {
+	Header PeerTrackerHeader
+	Body   ListFileRequestBody
+}
+
+type ListFileResponse struct {
+	Header PeerTrackerHeader
+	Body   ListFileResponseBody
+}
+
+type ListFileRequestBody struct {
+}
+
+type ListFileResponseBody struct {
+	Result OperationResult
+	Files  []P2PFile
+}
+
+type RegisterChunkRequest struct {
+	Header PeerTrackerHeader
+	Body   RegisterChunkRequestBody
+}
+
+type RegisterChunkResponse struct {
+	Header PeerTrackerHeader
+	Body   RegisterChunkResponseBody
+}
+
+type RegisterChunkRequestBody struct {
+	HostPort string
+	Chunk    P2PChunk
+}
+
+type RegisterChunkResponseBody struct {
+	Result          OperationResult
+	RegisteredChunk P2PChunk
+}
+
+type RegisterFileRequest struct {
+	Header PeerTrackerHeader
+	Body   RegisterFileRequestBody
+}
+
+type RegisterFileResponse struct {
+	Header PeerTrackerHeader
+	Body   RegisterFileResponseBody
+}
+
+type RegisterFileRequestBody struct {
+	HostPort     string
+	FilesToShare []P2PFile
+}
+
+type RegisterFileResponseBody struct {
+	Result          OperationResult
+	RegisteredFiles []P2PFile
+}
+
+// PeerPeerOperations
 
 type DownloadChunkRequest struct {
 	Header PeerPeerHeader

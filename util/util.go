@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"log"
 	"os"
 )
 
@@ -38,19 +37,7 @@ func Sha256FileChecksum(f *os.File) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func PrettyLogStruct(logger *log.Logger, v interface{}) {
+func StructToPrettyString(v interface{}) string {
 	prettyString, _ := json.MarshalIndent(v, "", "\t")
-	logger.Printf("%s", prettyString)
-}
-
-// UnionInt64Set returns the union of the 2 sets in a new non-nil set
-func UnionInt64Set(a, b map[int64]struct{}) map[int64]struct{} {
-	result := make(map[int64]struct{})
-	for k, v := range a {
-		result[k] = v
-	}
-	for k, v := range b {
-		result[k] = v
-	}
-	return result
+	return string(prettyString)
 }

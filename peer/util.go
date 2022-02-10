@@ -2,6 +2,7 @@ package peer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +12,7 @@ import (
 	"Lab1/util"
 )
 
-func localFilesMapToP2PFiles(localFiles map[string]localFile) []communication.P2PFile {
+func localFilesToP2PFiles(localFiles map[remoteFile]localFile) []communication.P2PFile {
 	var p2pFiles []communication.P2PFile
 	for _, file := range localFiles {
 		p2pFiles = append(p2pFiles, communication.P2PFile{
@@ -37,8 +38,42 @@ func validatePeerTrackerHeader(received, sent communication.PeerTrackerHeader) e
 	return nil
 }
 
-func makeLocalFiles(filepaths []string) (map[string]localFile, error) {
-	var files map[string]localFile
+// the []byte return value has been encoded into a raw json message
+func makeFailedOperationResponse(header communication.PeerPeerHeader, e error) []byte {
+	result := communication.OperationResult{
+		Code:   communication.Fail,
+		Detail: e.Error(),
+	}
+
+	var resp []byte
+	switch header.Operation {
+	case communication.DownloadChunk:
+		resp, _ = json.Marshal(communication.DownloadChunkResponse{
+			Header: header,
+			Body: communication.DownloadChunkResponseBody{
+				Result:        result,
+				ChunkIndex:    0,
+				ChunkData:     nil,
+				ChunkChecksum: "",
+			},
+		})
+	// todo: failed response for other operations
+
+	default:
+		resp, _ = json.Marshal(communication.GenericPeerPeerResponse{
+			Header: header,
+			Body: communication.GenericPeerPeerResponseBody{
+				Result: result,
+			},
+		})
+	}
+
+	return resp
+}
+
+// parseFilepaths returns a map from remoteFile to localFile
+func parseFilepaths(filepaths []string) (map[remoteFile]localFile, error) {
+	var files map[remoteFile]localFile
 	for _, fullPath := range filepaths {
 		f, err := os.Open(fullPath)
 		if err != nil {
@@ -59,8 +94,13 @@ func makeLocalFiles(filepaths []string) (map[string]localFile, error) {
 
 		_ = f.Close()
 
-		files[fullPath] = localFile{
-			name:     filepath.Base(fullPath),
+		name := filepath.Base(fullPath)
+
+		files[remoteFile{
+			name:     name,
+			checksum: checksum,
+		}] = localFile{
+			name:     name,
 			fullPath: fullPath,
 			checksum: checksum,
 			size:     stat.Size(),

@@ -56,9 +56,9 @@ func makeFailedOperationResponse(header communication.PeerTrackerHeader, e error
 	// todo: failed response for other operations
 
 	default:
-		resp, _ = json.Marshal(communication.GenericResponse{
+		resp, _ = json.Marshal(communication.GenericPeerTrackerResponse{
 			Header: header,
-			Body: communication.GenericResponseBody{
+			Body: communication.GenericPeerTrackerResponseBody{
 				Result: result,
 			},
 		})
