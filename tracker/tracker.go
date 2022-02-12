@@ -60,7 +60,6 @@ func Start() {
 			err    error
 		)
 		args := strings.Fields(line)
-		//todo: sanitize checksum, hostPort **and** in peer.go
 		switch args[0] {
 		case startCmd:
 			if len(args) != 2 {
@@ -111,10 +110,7 @@ func (t *tracker) start(hostPort string) error {
 	}
 	t.listening = true
 
-	t.p2pFileLocations = p2pFileLocations{
-		locations: make(map[remoteFile]p2pFileStatus),
-		mu:        sync.Mutex{},
-	}
+	t.p2pFileLocations.locations = make(map[remoteFile]p2pFileStatus)
 
 	infoLogger.Printf("%s %s", trackerOnlineListeningOn, hostPort)
 
@@ -258,14 +254,9 @@ func (t *tracker) handleRegisterFile(req communication.RegisterFileRequest) ([]b
 		t.p2pFileLocations.mu.Lock()
 
 		for _, fileToShare := range b.FilesToShare {
-			checksum := fileToShare.Checksum
-			if len(checksum) != util.Sha256ChecksumHexStringSize {
-				return nil, fmt.Errorf("%s", util.BadSha256ChecksumHexStringSize)
-			}
-
 			file := remoteFile{
 				name:     fileToShare.Name,
-				checksum: checksum,
+				checksum: fileToShare.Checksum,
 			}
 			// if file has not been recorded
 			if status, ok := t.p2pFileLocations.locations[file]; !ok {
@@ -342,16 +333,11 @@ func (t *tracker) handleFind(req communication.FindFileRequest) ([]byte, error) 
 	infoLogger.Printf("%s:", handlingRequest)
 	genericLogger.Printf("%s", util.StructToPrettyString(req))
 
-	checksum := req.Body.Checksum
-	if len(checksum) != util.Sha256ChecksumHexStringSize {
-		return nil, fmt.Errorf("%s", util.BadSha256ChecksumHexStringSize)
-	}
-
 	t.p2pFileLocations.mu.Lock()
 
 	status, ok := t.p2pFileLocations.locations[remoteFile{
 		name:     req.Body.FileName,
-		checksum: checksum,
+		checksum: req.Body.Checksum,
 	}]
 
 	if !ok {

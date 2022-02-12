@@ -19,13 +19,14 @@ const (
 	qCmd        = "q"
 	quitCmd     = "quit"
 
-	alreadyUsingTrackerAt                     = "already using tracker at"
-	alreadyUsingHostPortAt                    = "already using ip:port at"
+	alreadyUsingTrackerAt                     = "already using tracker ip:port at"
+	alreadyUsingSelfHostPortAt                = "already using self ip:port at"
 	availableFilesAre                         = "available files are"
 	badArguments                              = "bad arguments"
 	beginDownloading                          = "begin downloading"
 	badPeerResponse                           = "bad peer response"
 	badTrackerResponse                        = "bad tracker response"
+	discardBadChunk                           = "discard bad chunk"
 	downloadCanceledByUser                    = "download canceled by user"
 	downloadCompletedFor                      = "download completed for"
 	downloadedChunkIndexMismatch              = "downloaded chunk index mismatch"
@@ -39,12 +40,12 @@ const (
 	noAvailableFileRightNow                   = "no available file right now"
 	pleaseRegisterFirst                       = "please " + registerCmd + " first"
 	registeredFilesAre                        = "registered file(s) are"
-	retryDownloadChunk                        = "retry download chunk"
 	startToServeFilesToPeers                  = "start to serve files to peers"
 	unrecognizedCommand                       = "unrecognized command"
 	unrecognizedPeerPeerOperation             = "unrecognized peer peer operation"
 	unrecognizedPeerPeerResponseResultCode    = "unrecognized peer peer response result code"
 	unrecognizedPeerTrackerResponseResultCode = "unrecognized peer tracker response result code"
+	writeChunkFails                           = "write chunk fails"
 )
 
 var helpMessage = strings.Join([]string{

@@ -1,18 +1,15 @@
 package peer
 
 import (
-	"context"
+	"Lab1/communication"
+	"Lab1/util"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
-
-	"Lab1/communication"
-	"Lab1/util"
 )
 
-func localFilesToP2PFiles(localFiles map[remoteFile]localFile) []communication.P2PFile {
+func localFilesToP2PFiles(localFiles map[fileID]localFile) []communication.P2PFile {
 	var p2pFiles []communication.P2PFile
 	for _, file := range localFiles {
 		p2pFiles = append(p2pFiles, communication.P2PFile{
@@ -57,8 +54,6 @@ func makeFailedOperationResponse(header communication.PeerPeerHeader, e error) [
 				ChunkChecksum: "",
 			},
 		})
-	// todo: failed response for other operations
-
 	default:
 		resp, _ = json.Marshal(communication.GenericPeerPeerResponse{
 			Header: header,
@@ -71,9 +66,9 @@ func makeFailedOperationResponse(header communication.PeerPeerHeader, e error) [
 	return resp
 }
 
-// parseFilepaths returns a map from remoteFile to localFile
-func parseFilepaths(filepaths []string) (map[remoteFile]localFile, error) {
-	var files map[remoteFile]localFile
+// makeLocalFiles returns a map from fileID to localFile
+func makeLocalFiles(filepaths []string) (map[fileID]localFile, error) {
+	files := make(map[fileID]localFile)
 	for _, fullPath := range filepaths {
 		f, err := os.Open(fullPath)
 		if err != nil {
@@ -96,7 +91,7 @@ func parseFilepaths(filepaths []string) (map[remoteFile]localFile, error) {
 
 		name := filepath.Base(fullPath)
 
-		files[remoteFile{
+		files[fileID{
 			name:     name,
 			checksum: checksum,
 		}] = localFile{
@@ -109,37 +104,26 @@ func parseFilepaths(filepaths []string) (map[remoteFile]localFile, error) {
 	return files, nil
 }
 
-// pickChunk picks a chunk when excludedChunkByIndexChan receives things, then send the picked chunk to pickedChunkChan
-func pickChunk(ctx context.Context, locations communication.ChunkLocations, locationsLock *sync.Mutex,
-	excludedChunkByIndexChan <-chan map[int64]struct{}, pickedChunkChan chan<- toBeDownloadedChunk) {
-	//chunkInTransmissionByIndex := make(map[int64]struct{})
+// pickChunk
+func pickChunk(locations communication.ChunkLocations, excludedChunkByIndex map[int64]struct{}) toBeDownloadedChunk {
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case excludedIndex := <-excludedChunkByIndexChan:
-			if len(excludedIndex) == 0 {
-				//todo: special case?
-			}
+	if len(excludedChunkByIndex) == 0 {
+		// todo: special case?
+	}
 
-			locationsLock.Lock()
+	// todo: pick a chunk
 
-			// todo: pick a chunk
-
-			locationsLock.Unlock()
-
-			// todo: pickedChunkChan<- chunk
-			// todo: chunkInTransmissionByIndex[index] = struct{}
-		}
+	return toBeDownloadedChunk{
+		index:    0,
+		hostPort: "",
 	}
 }
 
-func writeChunk(f *os.File, c downloadedChunk) error {
-	if _, err := f.Seek(communication.ChunkSize*c.index, 0); err != nil {
+func writeChunk(f *os.File, chunkIndex int64, data []byte) error {
+	if _, err := f.Seek(chunkIndex*communication.ChunkSize, 0); err != nil {
 		return err
 	}
-	if _, err := f.Write(c.data); err != nil {
+	if _, err := f.Write(data); err != nil {
 		return err
 	}
 	return nil

@@ -52,9 +52,6 @@ func makeFailedOperationResponse(header communication.PeerTrackerHeader, e error
 				ChunkLocations: nil,
 			},
 		})
-
-	// todo: failed response for other operations
-
 	default:
 		resp, _ = json.Marshal(communication.GenericPeerTrackerResponse{
 			Header: header,
