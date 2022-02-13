@@ -96,11 +96,11 @@ func Start() {
 
 func (t *tracker) start(hostPort string) error {
 	if t.listening == true {
-		return fmt.Errorf("%s %s\n", trackerAlreadyRunningAt, t.hostPort)
+		return fmt.Errorf("%s %s", trackerAlreadyRunningAt, t.hostPort)
 	}
 
-	if _, _, err := net.SplitHostPort(hostPort); err != nil {
-		return fmt.Errorf("%v. %s\n", err, helpPrompt)
+	if err := util.ValidateHostPort(hostPort); err != nil {
+		return err
 	}
 	t.hostPort = hostPort
 
@@ -183,7 +183,7 @@ func (t *tracker) start(hostPort string) error {
 							break
 						}
 					default:
-						err = fmt.Errorf("%s %q.\n", unrecognizedPeerTrackerOperation, req.Header.Operation)
+						err = fmt.Errorf("%s %q", unrecognizedPeerTrackerOperation, req.Header.Operation)
 					}
 				}
 

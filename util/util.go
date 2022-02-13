@@ -4,8 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"os"
+	"strconv"
 )
 
 const (
@@ -52,4 +55,21 @@ func UnionInt64Set(a, b map[int64]struct{}) map[int64]struct{} {
 		result[k] = v
 	}
 	return result
+}
+
+func ValidateHostPort(hostPort string) error {
+	_, port, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		return err
+	}
+
+	portNumber, err := strconv.Atoi(port)
+	if err != nil {
+		return err
+	}
+
+	if portNumber < 0 || portNumber > 65535 {
+		return fmt.Errorf("tcp port out of range")
+	}
+	return nil
 }

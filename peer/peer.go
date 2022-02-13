@@ -78,6 +78,7 @@ type filesToShare struct {
 
 type fileDownloadJob struct {
 	cancel   chan<- struct{}
+	pause    chan<- bool
 	progress chan fileDownloadProgressQuery
 }
 
@@ -146,7 +147,6 @@ func Start() {
 				err    error
 			)
 			args := strings.Fields(line)
-			//todo: sanitize hostport (xx < port < xx) in bothe peer and tracker
 			switch args[0] {
 			case registerCmd:
 				if len(args) < 3 {
@@ -208,7 +208,7 @@ func Start() {
 // todo: multiple register and effect on shared file
 func (p *peer) register(trackerHostPort, selfHostPort string, filepaths []string) (string, error) {
 	for _, hp := range []string{trackerHostPort, selfHostPort} {
-		if _, _, err := net.SplitHostPort(hp); err != nil {
+		if err := util.ValidateHostPort(hp); err != nil {
 			return "", err
 		}
 	}
@@ -441,10 +441,11 @@ func (p *peer) download(filename, checksum string) (string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// next 3 channels are only accessible to the current function and its callee
 	resultChan := make(chan fileDownloadResult)
-	// progressQueryChan is only used inside the current function to query download progress
+	pauseChan := make(chan bool)
 	progressQueryChan := make(chan fileDownloadProgressQuery)
-	go downloadFile(ctx, p, file, resultChan, progressQueryChan)
+	go downloadFile(ctx, p, file, resultChan, progressQueryChan, pauseChan)
 
 	// update p.filesInDownload
 	p.filesInDownload.mu.Lock()
@@ -452,11 +453,14 @@ func (p *peer) download(filename, checksum string) (string, error) {
 	if p.filesInDownload.files == nil {
 		p.filesInDownload.files = make(map[fileID]fileDownloadJob)
 	}
+
+	// next 3 channels are accessible to outside functions to query download progress
 	cancelDownloadChan := make(chan struct{})
-	// downloadProgressQueryChan is used by outside functions to query download progress
+	pauseDownloadChan := make(chan bool)
 	downloadProgressQueryChan := make(chan fileDownloadProgressQuery)
 	p.filesInDownload.files[file] = fileDownloadJob{
 		cancel:   cancelDownloadChan,
+		pause:    pauseDownloadChan,
 		progress: downloadProgressQueryChan,
 	}
 
@@ -473,7 +477,7 @@ func (p *peer) download(filename, checksum string) (string, error) {
 			p.filesInDownload.mu.Unlock()
 
 			if r.error != nil {
-				return "", fmt.Errorf("%s %q: %v\n", failToDownload, filename, r.error)
+				return "", fmt.Errorf("%s %q: %w", failToDownload, filename, r.error)
 			} else {
 				return fmt.Sprintf("%s %q", downloadCompletedFor, filename), nil
 			}
@@ -489,6 +493,8 @@ func (p *peer) download(filename, checksum string) (string, error) {
 
 			p.filesInDownload.mu.Unlock()
 			return "", fmt.Errorf("%s", downloadCanceledByUser)
+		case pause := <-pauseDownloadChan:
+			pauseChan <- pause
 		}
 	}
 }
@@ -543,14 +549,14 @@ func findFile(p *peer, file fileID) (*communication.FindFileResponse, error) {
 	case communication.Success:
 		return &resp, nil
 	case communication.Fail:
-		return nil, fmt.Errorf("%s: %s\n", resp.Body.Result.Code, resp.Body.Result.Detail)
+		return nil, fmt.Errorf("%s: %s", resp.Body.Result.Code, resp.Body.Result.Detail)
 	default:
-		return nil, fmt.Errorf("%s %q\n", unrecognizedPeerTrackerResponseResultCode, resp.Body.Result.Code)
+		return nil, fmt.Errorf("%s %q", unrecognizedPeerTrackerResponseResultCode, resp.Body.Result.Code)
 	}
 }
 
 func downloadFile(ctx context.Context, p *peer, fileToDownload fileID,
-	result chan<- fileDownloadResult, progressQuery chan fileDownloadProgressQuery) {
+	result chan<- fileDownloadResult, progressQuery chan fileDownloadProgressQuery, pauseDownload <-chan bool) {
 	resp, err := findFile(p, fileToDownload)
 	if err != nil {
 		result <- fileDownloadResult{
@@ -629,96 +635,111 @@ func downloadFile(ctx context.Context, p *peer, fileToDownload fileID,
 	defer chunkLocationsUpdateTicker.Stop()
 
 	// wait for download completion
+	paused := false
 	completedChunksByIndex := make(map[int64]struct{})
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case r := <-chunkDownloadResultChan:
-			// remove chunk from in transmission set
-			delete(inTransmissionChunksByIndex, r.index)
-
-			if r.error != nil {
-				// discard failed chunk
-				infoLogger.Printf("%s (file: %q, chunk index: %v, host: %q) %s: %v",
-					discardBadChunk, fileToDownload.name, r.index, r.hostPort, dueToError, r.error)
-
-				// give a new chunk to a chunk download goroutine
-				picked := pickChunk(chunkLocations, util.UnionInt64Set(inTransmissionChunksByIndex, completedChunksByIndex))
-				toDownloadChunkChan <- picked
-				inTransmissionChunksByIndex[picked.index] = struct{}{}
+		case paused = <-pauseDownload:
+			if paused == true {
+				infoLogger.Printf("%s %q", downloadingPausedFor, fileToDownload.name)
+			} else {
+				infoLogger.Printf("%s %q", downloadingResumedFor, fileToDownload.name)
+			}
+		case <-progressQuery:
+			progressQuery <- fileDownloadProgressQuery{
+				completedChunksByIndex:      completedChunksByIndex,
+				inTransmissionChunksByIndex: inTransmissionChunksByIndex,
+			}
+		default:
+			if paused == true {
 				continue
 			}
 
-			// write the chunk and if fails, discard the chunk
-			// todo partiallyDownloaded mu.Lock()?
-			if err := writeChunk(file, r.index, r.data); err != nil {
-				result <- fileDownloadResult{
-					error: fmt.Errorf("%s (file: %q, chunk index: %v) %s: %v",
-						writeChunkFails, fileToDownload.name, r.index, dueToError, err),
-				}
-				return
-			}
+			select {
+			case r := <-chunkDownloadResultChan:
+				// remove chunk from in transmission set
+				delete(inTransmissionChunksByIndex, r.index)
 
-			// todo: new channel and go
-			// todo: update partiallyDownloadedFiles mu.Lock()?
-			// tell the tracker about the new chunk
-			// try at most totalTry times if error occurs
-			totalTry := 3
-			var registerChunkErr error
-			for i := 0; i < totalTry; i++ {
-				registerChunkErr = registerChunk(p, fileToDownload, r.index)
-				if registerChunkErr != nil {
+				if r.error != nil {
+					// discard failed chunk
+					infoLogger.Printf("%s (file: %q, chunk index: %v, host: %q) %s: %v",
+						discardBadChunk, fileToDownload.name, r.index, r.hostPort, dueToError, r.error)
+
+					// give a new chunk to a chunk download goroutine
+					picked := pickChunk(chunkLocations, util.UnionInt64Set(inTransmissionChunksByIndex, completedChunksByIndex))
+					toDownloadChunkChan <- picked
+					inTransmissionChunksByIndex[picked.index] = struct{}{}
 					continue
 				}
-				break
-			}
-			if registerChunkErr != nil {
-				result <- fileDownloadResult{
-					error: err,
+
+				// write the chunk
+				// todo partiallyDownloaded mu.Lock()?
+				if err := writeChunk(file, r.index, r.data); err != nil {
+					result <- fileDownloadResult{
+						error: fmt.Errorf("%s (file: %q, chunk index: %v) %s: %w",
+							writeChunkFails, fileToDownload.name, r.index, dueToError, err),
+					}
+					return
 				}
-				return
-			}
 
-			// add chunk to completed set
-			completedChunksByIndex[r.index] = struct{}{}
-
-			// if whole file download completed
-			if len(completedChunksByIndex) == totalChunkCount {
-				checksumToVerify, err := util.Sha256FileChecksum(file)
-				if err != nil {
+				// todo: new channel and go
+				// todo: update partiallyDownloadedFiles mu.Lock()?
+				// tell the tracker about the new chunk
+				// try at most totalTry times if error occurs
+				totalTry := 3
+				var registerChunkErr error
+				for i := 0; i < totalTry; i++ {
+					registerChunkErr = registerChunk(p, fileToDownload, r.index)
+					if registerChunkErr != nil {
+						continue
+					}
+					break
+				}
+				if registerChunkErr != nil {
 					result <- fileDownloadResult{
 						error: err,
 					}
 					return
 				}
-				if checksumToVerify != fileToDownload.checksum {
+
+				// add chunk to completed set
+				completedChunksByIndex[r.index] = struct{}{}
+
+				// if whole file download completed
+				if len(completedChunksByIndex) == totalChunkCount {
+					checksumToVerify, err := util.Sha256FileChecksum(file)
+					if err != nil {
+						result <- fileDownloadResult{
+							error: err,
+						}
+						return
+					}
+					if checksumToVerify != fileToDownload.checksum {
+						result <- fileDownloadResult{
+							error: fmt.Errorf("%v", downloadedFileChecksumMismatch),
+						}
+						return
+					}
 					result <- fileDownloadResult{
-						error: fmt.Errorf("%v\n", downloadedFileChecksumMismatch),
+						error: nil,
 					}
 					return
 				}
-				result <- fileDownloadResult{
-					error: nil,
-				}
-				return
-			}
 
-			// else still chunks left to download
-			picked := pickChunk(chunkLocations, util.UnionInt64Set(inTransmissionChunksByIndex, completedChunksByIndex))
-			toDownloadChunkChan <- picked
-			inTransmissionChunksByIndex[picked.index] = struct{}{}
-		case <-chunkLocationsUpdateTicker.C:
-			resp, err := findFile(p, fileToDownload)
-			if err != nil {
-				infoLogger.Printf("%s: %v", ignoreFailedUpdateToChunkLocations, err)
-				continue
-			}
-			chunkLocations = resp.Body.ChunkLocations
-		case <-progressQuery:
-			progressQuery <- fileDownloadProgressQuery{
-				completedChunksByIndex:      completedChunksByIndex,
-				inTransmissionChunksByIndex: inTransmissionChunksByIndex,
+				// else still chunks left to download
+				picked := pickChunk(chunkLocations, util.UnionInt64Set(inTransmissionChunksByIndex, completedChunksByIndex))
+				toDownloadChunkChan <- picked
+				inTransmissionChunksByIndex[picked.index] = struct{}{}
+			case <-chunkLocationsUpdateTicker.C:
+				resp, err := findFile(p, fileToDownload)
+				if err != nil {
+					infoLogger.Printf("%s: %v", ignoreFailedUpdateToChunkLocations, err)
+					continue
+				}
+				chunkLocations = resp.Body.ChunkLocations
 			}
 		}
 	}
@@ -782,9 +803,9 @@ func downloadChunk(file fileID, c toBeDownloadedChunk) ([]byte, error) {
 		}
 		return data, nil
 	case communication.Fail:
-		return nil, fmt.Errorf("%s: %s\n", resp.Body.Result.Code, resp.Body.Result.Detail)
+		return nil, fmt.Errorf("%s: %s", resp.Body.Result.Code, resp.Body.Result.Detail)
 	default:
-		return nil, fmt.Errorf("%s %q\n", unrecognizedPeerPeerResponseResultCode, resp.Body.Result.Code)
+		return nil, fmt.Errorf("%s %q", unrecognizedPeerPeerResponseResultCode, resp.Body.Result.Code)
 	}
 }
 
@@ -839,9 +860,9 @@ func registerChunk(p *peer, file fileID, chunkIndex int64) error {
 	switch resp.Body.Result.Code {
 	case communication.Success:
 	case communication.Fail:
-		return fmt.Errorf("%s: %s\n", resp.Body.Result.Code, resp.Body.Result.Detail)
+		return fmt.Errorf("%s: %s", resp.Body.Result.Code, resp.Body.Result.Detail)
 	default:
-		return fmt.Errorf("%s %q\n", unrecognizedPeerTrackerResponseResultCode, resp.Body.Result.Code)
+		return fmt.Errorf("%s %q", unrecognizedPeerTrackerResponseResultCode, resp.Body.Result.Code)
 	}
 
 	return nil
@@ -853,7 +874,7 @@ func serveFiles(p *peer, l *net.Listener) {
 	for {
 		conn, err := (*l).Accept()
 		if err != nil {
-			errorLogger.Printf("%v\n", err)
+			errorLogger.Printf("%v", err)
 			continue
 		}
 
@@ -877,7 +898,7 @@ func serveFiles(p *peer, l *net.Listener) {
 					//todo: p.filesToShare.mu.Lock() because register is changing this
 					//todo: p.partiallyDownloadedFiles.mu.Lock() because download is changing this
 				default:
-					err = fmt.Errorf("%s %q.\n", unrecognizedPeerPeerOperation, req.Header.Operation)
+					err = fmt.Errorf("%s %q", unrecognizedPeerPeerOperation, req.Header.Operation)
 				}
 			}
 

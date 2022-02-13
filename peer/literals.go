@@ -32,6 +32,8 @@ const (
 	downloadedChunkIndexMismatch              = "downloaded chunk index mismatch"
 	downloadedChunkChecksumMismatch           = "downloaded chunk checksum mismatch"
 	downloadedFileChecksumMismatch            = "downloaded file checksum mismatch"
+	downloadingPausedFor                      = "downloading paused for"
+	downloadingResumedFor                     = "downloading resumed for"
 	dueToError                                = "due to error"
 	failToDownload                            = "fail to download"
 	goodbye                                   = "goodbye"
