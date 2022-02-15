@@ -1,12 +1,14 @@
 package peer
 
 import (
-	"Lab1/communication"
-	"Lab1/util"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+
+	"Lab1/communication"
+	"Lab1/util"
 )
 
 func localFilesToP2PFiles(localFiles map[fileID]localFile) []communication.P2PFile {
@@ -120,7 +122,7 @@ func pickChunk(locations communication.ChunkLocations, excludedChunkByIndex map[
 }
 
 func writeChunk(f *os.File, chunkIndex int64, data []byte) error {
-	if _, err := f.Seek(chunkIndex*communication.ChunkSize, 0); err != nil {
+	if _, err := f.Seek(chunkIndex*communication.ChunkSize, io.SeekStart); err != nil {
 		return err
 	}
 	if _, err := f.Write(data); err != nil {
