@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"time"
 
 	"Lab1/communication"
 	"Lab1/util"
@@ -106,23 +109,42 @@ func makeLocalFiles(filepaths []string) (map[fileID]localFile, error) {
 	return files, nil
 }
 
-// pickChunk
-func pickChunk(locations communication.ChunkLocations, excludedChunkByIndex map[int64]struct{}) toBeDownloadedChunk {
-
-	if len(excludedChunkByIndex) == 0 {
-		// todo: special case?
+// pickChunk picks a chunk which index is not in excludedChunksByIndex and which hostPort location is not excludedHostPort
+func pickChunk(locations communication.ChunkLocations, excludedChunksByIndex map[int]struct{}) (toBeDownloadedChunk, error) {
+	// pick the chunk that fewest peers have it
+	numberOfPeersWithChunk := math.MaxInt64
+	chunkIndex := -1
+	for index, location := range locations {
+		if _, ok := excludedChunksByIndex[index]; !ok {
+			n := len(location)
+			if n < numberOfPeersWithChunk {
+				numberOfPeersWithChunk = n
+				chunkIndex = index
+			}
+		}
 	}
 
-	// todo: pick a chunk
+	if chunkIndex == -1 {
+		return toBeDownloadedChunk{}, fmt.Errorf("%s", noChunkIsAvailableRightNow)
+	}
+
+	// randomly pick a peer from all the peers having the chunk
+	hostPorts := make([]string, 0, numberOfPeersWithChunk)
+	for hostPort := range locations[chunkIndex] {
+		hostPorts = append(hostPorts, hostPort)
+	}
+	rand.Seed(time.Now().UnixNano())
+	pickedHostPort := hostPorts[rand.Intn(numberOfPeersWithChunk)]
 
 	return toBeDownloadedChunk{
-		index:    0,
-		hostPort: "",
-	}
+		index:    chunkIndex,
+		hostPort: pickedHostPort,
+	}, nil
 }
 
-func writeChunk(f *os.File, chunkIndex int64, data []byte) error {
-	if _, err := f.Seek(chunkIndex*communication.ChunkSize, io.SeekStart); err != nil {
+func writeChunk(f *os.File, chunkIndex int, data []byte) error {
+	offset := chunkIndex * communication.ChunkSize
+	if _, err := f.Seek(int64(offset), io.SeekStart); err != nil {
 		return err
 	}
 	if _, err := f.Write(data); err != nil {

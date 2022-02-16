@@ -29,7 +29,7 @@ type P2PFile struct {
 type P2PChunk struct {
 	FileName     string
 	FileChecksum string
-	ChunkIndex   int64
+	ChunkIndex   int
 }
 
 type GenericPeerPeerResponse struct {
@@ -162,12 +162,12 @@ type DownloadChunkResponse struct {
 type DownloadChunkRequestBody struct {
 	FileName     string
 	FileChecksum string
-	ChunkIndex   int64
+	ChunkIndex   int
 }
 
 type DownloadChunkResponseBody struct {
 	Result        OperationResult
-	ChunkIndex    int64
+	ChunkIndex    int
 	ChunkData     []byte
 	ChunkChecksum string
 }

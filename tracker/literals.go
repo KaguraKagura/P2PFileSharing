@@ -18,7 +18,7 @@ const (
 	chunkRegisterIsSuccessful        = "chunk register is successful"
 	fileDoesNotExist                 = "file does not exist"
 	fileIsFound                      = "file is found"
-	fileRegisterIsSuccessful         = "file register is successful"
+	registerIsSuccessful             = "register is successful"
 	goodbye                          = "goodbye"
 	handlingRequest                  = "handling request"
 	lookUpFileListIsSuccessful       = "look up file list is successful"

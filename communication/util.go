@@ -3,7 +3,7 @@ package communication
 import "math"
 
 const (
-	ChunkSize int64 = 1024 * 1024
+	ChunkSize = 1024 * 1024
 )
 
 func CalculateNumberOfChunks(fileSize int64) int {

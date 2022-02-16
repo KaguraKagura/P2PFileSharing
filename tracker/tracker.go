@@ -83,7 +83,9 @@ func Start() {
 		if err != nil {
 			errorLogger.Printf("%v", err)
 		} else {
-			genericLogger.Printf("%s", result)
+			if result != "" {
+				genericLogger.Printf("%s", result)
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -215,6 +217,7 @@ func (t *tracker) handleRegisterChunk(req communication.RegisterChunkRequest) ([
 	chunkIndex := req.Body.Chunk.ChunkIndex
 
 	t.p2pFileLocations.mu.Lock()
+	defer t.p2pFileLocations.mu.Unlock()
 
 	// if file has not been recorded, i.e. never registered
 	if status, ok := t.p2pFileLocations.locations[file]; !ok {
@@ -222,8 +225,6 @@ func (t *tracker) handleRegisterChunk(req communication.RegisterChunkRequest) ([
 	} else { // file has been recorded
 		status.chunkLocations[chunkIndex][req.Body.HostPort] = struct{}{}
 	}
-
-	t.p2pFileLocations.mu.Unlock()
 
 	resp, _ := json.Marshal(communication.RegisterChunkResponse{
 		Header: req.Header,
@@ -252,6 +253,7 @@ func (t *tracker) handleRegisterFile(req communication.RegisterFileRequest) ([]b
 
 	if b.FilesToShare != nil {
 		t.p2pFileLocations.mu.Lock()
+		defer t.p2pFileLocations.mu.Unlock()
 
 		for _, fileToShare := range b.FilesToShare {
 			file := remoteFile{
@@ -280,8 +282,6 @@ func (t *tracker) handleRegisterFile(req communication.RegisterFileRequest) ([]b
 				}
 			}
 		}
-
-		t.p2pFileLocations.mu.Unlock()
 	}
 
 	resp, _ := json.Marshal(communication.RegisterFileResponse{
@@ -289,7 +289,7 @@ func (t *tracker) handleRegisterFile(req communication.RegisterFileRequest) ([]b
 		Body: communication.RegisterFileResponseBody{
 			Result: communication.OperationResult{
 				Code:   communication.Success,
-				Detail: fileRegisterIsSuccessful,
+				Detail: registerIsSuccessful,
 			},
 			RegisteredFiles: b.FilesToShare,
 		},
@@ -301,10 +301,10 @@ func (t *tracker) handleList(req communication.ListFileRequest) ([]byte, error) 
 	infoLogger.Printf("%s:", handlingRequest)
 	genericLogger.Printf("%s", util.StructToPrettyString(req))
 
-	var p2pFiles []communication.P2PFile
-
 	t.p2pFileLocations.mu.Lock()
+	defer t.p2pFileLocations.mu.Unlock()
 
+	var p2pFiles []communication.P2PFile
 	for fileID, stat := range t.p2pFileLocations.locations {
 		p2pFiles = append(p2pFiles, communication.P2PFile{
 			Name:     fileID.name,
@@ -312,8 +312,6 @@ func (t *tracker) handleList(req communication.ListFileRequest) ([]byte, error) 
 			Size:     stat.size,
 		})
 	}
-
-	t.p2pFileLocations.mu.Unlock()
 
 	resp, _ := json.Marshal(communication.ListFileResponse{
 		Header: req.Header,
@@ -334,6 +332,7 @@ func (t *tracker) handleFind(req communication.FindFileRequest) ([]byte, error) 
 	genericLogger.Printf("%s", util.StructToPrettyString(req))
 
 	t.p2pFileLocations.mu.Lock()
+	defer t.p2pFileLocations.mu.Unlock()
 
 	status, ok := t.p2pFileLocations.locations[remoteFile{
 		name:     req.Body.FileName,
@@ -355,8 +354,6 @@ func (t *tracker) handleFind(req communication.FindFileRequest) ([]byte, error) 
 			ChunkLocations: status.chunkLocations,
 		},
 	})
-
-	t.p2pFileLocations.mu.Unlock()
 
 	return resp, nil
 }

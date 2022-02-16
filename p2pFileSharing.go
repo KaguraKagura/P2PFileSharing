@@ -15,7 +15,7 @@ import (
 func main() {
 	app := cli.App{
 		Name:      util.AppName,
-		Usage:     "a p2p file sharing system consist of peers and a central tracker",
+		Usage:     "a p2p file sharing system consisting of peers and a central tracker",
 		UsageText: fmt.Sprintf("%s command", util.AppName),
 		Commands: []*cli.Command{
 			{

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -32,7 +33,7 @@ type localFile struct {
 type partiallyDownloadedFile struct {
 	fp                     *os.File
 	meta                   localFile
-	completedChunksByIndex map[int64]struct{}
+	completedChunksByIndex map[int]struct{}
 }
 
 type fileID struct {
@@ -41,14 +42,14 @@ type fileID struct {
 }
 
 type toBeDownloadedChunk struct {
-	index    int64
+	index    int
 	hostPort string
 }
 
 type chunkDownloadResult struct {
 	error    error
 	hostPort string
-	index    int64
+	index    int
 	data     []byte
 }
 
@@ -58,8 +59,8 @@ type fileDownloadResult struct {
 }
 
 type fileDownloadProgressQuery struct {
-	completedChunksByIndex      map[int64]struct{}
-	inTransmissionChunksByIndex map[int64]struct{}
+	completedChunksByIndex      map[int]struct{}
+	inTransmissionChunksByIndex map[int]struct{}
 }
 
 type filesInTransmission struct {
@@ -195,7 +196,9 @@ func Start() {
 			if err != nil {
 				errorLogger.Printf("%v", err)
 			} else {
-				genericLogger.Printf("%s", result)
+				if result != "" {
+					genericLogger.Printf("%s", result)
+				}
 			}
 		}
 	}
@@ -367,7 +370,7 @@ func (p *peer) list() (string, error) {
 		var builder strings.Builder
 		builder.WriteString(fmt.Sprintf("%s: %s\n", resp.Body.Result.Code, resp.Body.Result.Detail))
 		files := resp.Body.Files
-		if files != nil {
+		if len(files) != 0 {
 			sort.Slice(files, func(i, j int) bool {
 				return files[i].Name < files[j].Name
 			})
@@ -376,7 +379,7 @@ func (p *peer) list() (string, error) {
 				builder.WriteString(fmt.Sprintf("%s\n", util.StructToPrettyString(f)))
 			}
 		} else {
-			builder.WriteString(fmt.Sprintf("%s", noAvailableFileRightNow))
+			builder.WriteString(fmt.Sprintf("%s", noFileIsAvailableRightNow))
 		}
 		return builder.String(), nil
 	case communication.Fail:
@@ -633,9 +636,17 @@ func downloadFile(ctx context.Context, p *peer, fileToDownload fileID,
 	}
 
 	// assign initial work to every "chunk download" goroutine
-	inTransmissionChunksByIndex := make(map[int64]struct{})
+	inTransmissionChunksByIndex := make(map[int]struct{})
 	for i := 0; i < workerCount; i++ {
-		picked := pickChunk(chunkLocations, inTransmissionChunksByIndex)
+		picked, err := pickChunk(chunkLocations, inTransmissionChunksByIndex)
+		if err != nil {
+			result <- fileDownloadResult{
+				error: err,
+				f:     localFile{},
+			}
+			return
+		}
+
 		toDownloadChunkChan <- picked
 		inTransmissionChunksByIndex[picked.index] = struct{}{}
 	}
@@ -647,7 +658,7 @@ func downloadFile(ctx context.Context, p *peer, fileToDownload fileID,
 
 	// wait for download completion
 	paused := false
-	completedChunksByIndex := make(map[int64]struct{})
+	completedChunksByIndex := make(map[int]struct{})
 
 	for {
 		select {
@@ -680,7 +691,15 @@ func downloadFile(ctx context.Context, p *peer, fileToDownload fileID,
 						discardBadChunk, fileToDownload.name, r.index, r.hostPort, dueToError, r.error)
 
 					// give a new chunk to a chunk download goroutine
-					picked := pickChunk(chunkLocations, util.UnionInt64Set(inTransmissionChunksByIndex, completedChunksByIndex))
+					picked, err := pickChunk(chunkLocations, util.UnionIntSet(inTransmissionChunksByIndex, completedChunksByIndex))
+					if err != nil {
+						result <- fileDownloadResult{
+							error: err,
+							f:     localFile{},
+						}
+						return
+					}
+
 					toDownloadChunkChan <- picked
 					inTransmissionChunksByIndex[picked.index] = struct{}{}
 					continue
@@ -724,7 +743,7 @@ func downloadFile(ctx context.Context, p *peer, fileToDownload fileID,
 					p.filesInTransmission.files[fileToDownload] = partiallyDownloadedFile{
 						fp:                     fp,
 						meta:                   f,
-						completedChunksByIndex: make(map[int64]struct{}),
+						completedChunksByIndex: make(map[int]struct{}),
 					}
 				} else {
 					fileInTransmission.completedChunksByIndex[r.index] = struct{}{}
@@ -762,7 +781,14 @@ func downloadFile(ctx context.Context, p *peer, fileToDownload fileID,
 				}
 
 				// else still chunks left to download
-				picked := pickChunk(chunkLocations, util.UnionInt64Set(inTransmissionChunksByIndex, completedChunksByIndex))
+				picked, err := pickChunk(chunkLocations, util.UnionIntSet(inTransmissionChunksByIndex, completedChunksByIndex))
+				if err != nil {
+					result <- fileDownloadResult{
+						error: err,
+						f:     localFile{},
+					}
+					return
+				}
 				toDownloadChunkChan <- picked
 				inTransmissionChunksByIndex[picked.index] = struct{}{}
 			case <-chunkLocationsUpdateTicker.C:
@@ -842,7 +868,7 @@ func downloadChunk(file fileID, c toBeDownloadedChunk) ([]byte, error) {
 }
 
 // registerChunk registers a file chunk with the tracker
-func registerChunk(p *peer, file fileID, chunkIndex int64) error {
+func registerChunk(p *peer, file fileID, chunkIndex int) error {
 	requestId := uuid.NewString()
 	chunk := communication.P2PChunk{
 		FileName:     file.name,
@@ -970,12 +996,8 @@ func serveFiles(p *peer, l *net.Listener) {
 	}
 }
 
-func getChunk(p *peer, id fileID, chunkIndex int64, chunkSize int64) ([]byte, error) {
-	var (
-		found bool
-		err   error
-		data  = make([]byte, chunkSize)
-	)
+func getChunk(p *peer, id fileID, chunkIndex int, chunkSize int) ([]byte, error) {
+	data := make([]byte, chunkSize)
 
 	offset := chunkIndex * chunkSize
 
@@ -983,37 +1005,46 @@ func getChunk(p *peer, id fileID, chunkIndex int64, chunkSize int64) ([]byte, er
 	p.filesToShare.mu.Lock()
 
 	if f, ok := p.filesToShare.files[id]; ok {
-		found = true
+		defer p.filesToShare.mu.Unlock()
 
-		var fp *os.File
-		fp, err = os.Open(f.fullPath)
-		if err == nil {
-			if _, err = fp.Seek(offset, io.SeekStart); err == nil {
-				_, err = fp.Read(data)
-			}
-			err = fp.Close()
-		}
-	}
-
-	p.filesToShare.mu.Unlock()
-
-	if found == true {
+		fp, err := os.Open(f.fullPath)
 		if err != nil {
+			return nil, err
+		}
+
+		defer func(fp *os.File) {
+			_ = fp.Close()
+		}(fp)
+
+		if _, err := fp.Seek(int64(offset), io.SeekStart); err != nil {
+			return nil, err
+		}
+
+		if n, err := fp.Read(data); err != nil {
+			if errors.Is(err, io.EOF) {
+				return data[:n], nil
+			}
 			return nil, err
 		}
 		return data, nil
 	}
 
-	// not found in peer.filesToShare, then look at peer.filesInTransmission
+	p.filesToShare.mu.Unlock()
+
+	// did not find in peer.filesToShare, then look at peer.filesInTransmission
+	// no need to close the file from peer.filesToShare because download takes care of it
 	p.filesInTransmission.mu.Lock()
 	defer p.filesInTransmission.mu.Unlock()
 
 	if f, ok := p.filesInTransmission.files[id]; ok {
 		if _, ok := f.completedChunksByIndex[chunkIndex]; ok {
-			if _, err := f.fp.Seek(offset, io.SeekStart); err != nil {
+			if _, err := f.fp.Seek(int64(offset), io.SeekStart); err != nil {
 				return nil, err
 			}
-			if _, err := f.fp.Read(data); err != nil {
+			if n, err := f.fp.Read(data); err != nil {
+				if errors.Is(err, io.EOF) {
+					return data[:n], nil
+				}
 				return nil, err
 			}
 			return data, nil

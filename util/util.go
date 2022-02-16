@@ -45,9 +45,9 @@ func StructToPrettyString(v interface{}) string {
 	return string(prettyString)
 }
 
-// UnionInt64Set returns the union of the 2 sets in a new non-nil set
-func UnionInt64Set(a, b map[int64]struct{}) map[int64]struct{} {
-	result := make(map[int64]struct{})
+// UnionIntSet returns the union of the 2 sets in a new non-nil set
+func UnionIntSet(a, b map[int]struct{}) map[int]struct{} {
+	result := make(map[int]struct{})
 	for k, v := range a {
 		result[k] = v
 	}
