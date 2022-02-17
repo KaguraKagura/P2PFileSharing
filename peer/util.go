@@ -3,7 +3,6 @@ package peer
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"math/rand"
 	"os"
@@ -109,8 +108,9 @@ func makeLocalFiles(filepaths []string) (map[fileID]localFile, error) {
 	return files, nil
 }
 
-// pickChunk picks a chunk which index is not in excludedChunksByIndex and which hostPort location is not excludedHostPort
-func pickChunk(locations communication.ChunkLocations, excludedChunksByIndex map[int]struct{}) (toBeDownloadedChunk, error) {
+// pickChunk picks a chunk which index is not in excludedChunksByIndex
+// can return nil if no chunk is picked
+func pickChunk(locations communication.ChunkLocations, excludedChunksByIndex map[int]struct{}) *toBeDownloadedChunk {
 	// pick the chunk that fewest peers have it
 	numberOfPeersWithChunk := math.MaxInt64
 	chunkIndex := -1
@@ -124,8 +124,9 @@ func pickChunk(locations communication.ChunkLocations, excludedChunksByIndex map
 		}
 	}
 
+	// no chunk is picked
 	if chunkIndex == -1 {
-		return toBeDownloadedChunk{}, fmt.Errorf("%s", noChunkIsAvailableRightNow)
+		return nil
 	}
 
 	// randomly pick a peer from all the peers having the chunk
@@ -136,18 +137,15 @@ func pickChunk(locations communication.ChunkLocations, excludedChunksByIndex map
 	rand.Seed(time.Now().UnixNano())
 	pickedHostPort := hostPorts[rand.Intn(numberOfPeersWithChunk)]
 
-	return toBeDownloadedChunk{
+	return &toBeDownloadedChunk{
 		index:    chunkIndex,
 		hostPort: pickedHostPort,
-	}, nil
+	}
 }
 
 func writeChunk(f *os.File, chunkIndex int, data []byte) error {
 	offset := chunkIndex * communication.ChunkSize
-	if _, err := f.Seek(int64(offset), io.SeekStart); err != nil {
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
+	if _, err := f.WriteAt(data, int64(offset)); err != nil {
 		return err
 	}
 	return nil

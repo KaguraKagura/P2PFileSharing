@@ -28,7 +28,6 @@ const (
 	badTrackerResponse                        = "bad tracker response"
 	chunkDoesNotExist                         = "chunk does not exist"
 	chunkIsFound                              = "chunk is found"
-	discardBadChunk                           = "discard bad chunk"
 	downloadCanceledByUser                    = "download canceled by user"
 	downloadCompletedFor                      = "download completed for"
 	downloadedChunkIndexMismatch              = "downloaded chunk index mismatch"
@@ -36,14 +35,12 @@ const (
 	downloadedFileChecksumMismatch            = "downloaded file checksum mismatch"
 	downloadingPausedFor                      = "downloading paused for"
 	downloadingResumedFor                     = "downloading resumed for"
-	dueToError                                = "due to error"
 	failToDownload                            = "fail to download"
 	fileDoesNotExist                          = "file does not exist"
 	goodbye                                   = "goodbye"
 	ignoreFailedUpdateToChunkLocations        = "ignore failed update to chunk locations"
 	inTheBackground                           = "in the background"
 	noFileIsAvailableRightNow                 = "no file is available right now"
-	noChunkIsAvailableRightNow                = "no chunk is available right now"
 	pleaseRegisterFirst                       = "please " + registerCmd + " first"
 	registeredFilesAre                        = "registered file(s) are"
 	startToServeFilesToPeers                  = "start to serve files to peers"
@@ -51,7 +48,7 @@ const (
 	unrecognizedPeerPeerOperation             = "unrecognized peer peer operation"
 	unrecognizedPeerPeerResponseResultCode    = "unrecognized peer peer response result code"
 	unrecognizedPeerTrackerResponseResultCode = "unrecognized peer tracker response result code"
-	writeChunkFails                           = "write chunk fails"
+	writeChunkFailsFor                        = "write chunk fails for"
 )
 
 var helpMessage = strings.Join([]string{
