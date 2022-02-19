@@ -1,6 +1,9 @@
 package communication
 
 const (
+	//ChunkSize = 1024 * 1024
+	ChunkSize = 1
+
 	RegisterChunk PeerTrackerOperation = "register_chunk"
 	RegisterFile  PeerTrackerOperation = "register_file"
 	List          PeerTrackerOperation = "list"

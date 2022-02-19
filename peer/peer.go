@@ -56,11 +56,6 @@ type fileDownloadResult struct {
 	f     localFile
 }
 
-type fileDownloadProgressQuery struct {
-	completedChunksByIndex      map[int]struct{}
-	inTransmissionChunksByIndex map[int]struct{}
-}
-
 type filesInTransmission struct {
 	files       map[fileID]*partiallyDownloadedFile
 	jobControls map[fileID]fileDownloadJobControl
@@ -77,9 +72,8 @@ type filesToShare struct {
 }
 
 type fileDownloadJobControl struct {
-	cancel   chan<- struct{}
-	pause    chan<- bool
-	progress chan fileDownloadProgressQuery
+	cancel chan<- struct{}
+	pause  chan<- bool
 }
 
 type peer struct {
@@ -125,15 +119,13 @@ func Start() {
 		// for non-blocking functions' result
 		case result := <-resultChan:
 			genericLogger.Printf("%s", result)
-
 		// for non-blocking functions' error
 		case err := <-errorChan:
 			errorLogger.Printf("%v", err)
-
 		// act on an entered line from stdin
 		case line := <-lineFromStdinChan:
 			if line == "" {
-				continue
+				break
 			}
 
 			var (
@@ -175,9 +167,19 @@ func Start() {
 				}()
 				// continue since download is made non-blocking thus no result or error to print right now
 				continue
-			// todo: case showDownloadsCmd: need to lock in that func
-			// todo: case cancelDownloadCmd: lock
-			// todo: case showServeCmd: lock
+			case showDownloadsCmd:
+				if len(args) != 1 {
+					err = fmt.Errorf("%s. %s", badArguments, helpPrompt)
+					break
+				}
+				result, err = self.showDownloads()
+			case cancelDownloadCmd:
+				if len(args) != 3 {
+					err = fmt.Errorf("%s. %s", badArguments, helpPrompt)
+					break
+				}
+				result, err = self.cancelDownload(args[1], args[2])
+				//todo pauseDownload
 			case hCmd:
 				fallthrough
 			case helpCmd:
@@ -438,11 +440,10 @@ func (p *peer) download(filename, checksum string) (string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// next 3 channels are only accessible to the current function and its callee
+	// next 2 channels are only accessible to the current function and its callee
 	resultChan := make(chan fileDownloadResult)
 	pauseChan := make(chan bool)
-	progressQueryChan := make(chan fileDownloadProgressQuery)
-	go downloadFile(ctx, p, file, resultChan, progressQueryChan, pauseChan)
+	go downloadFile(ctx, p, file, resultChan, pauseChan)
 
 	// update p.filesInTransmission
 	p.filesInTransmission.mu.Lock()
@@ -459,14 +460,12 @@ func (p *peer) download(filename, checksum string) (string, error) {
 		completedChunksByIndex: make(map[int]struct{}),
 	}
 
-	// next 3 channels are accessible to outside functions to query download progress
+	// next 2 channels are accessible to outside functions to query download progress
 	cancelDownloadChan := make(chan struct{})
 	pauseDownloadChan := make(chan bool)
-	downloadProgressQueryChan := make(chan fileDownloadProgressQuery)
 	p.filesInTransmission.jobControls[file] = fileDownloadJobControl{
-		cancel:   cancelDownloadChan,
-		pause:    pauseDownloadChan,
-		progress: downloadProgressQueryChan,
+		cancel: cancelDownloadChan,
+		pause:  pauseDownloadChan,
 	}
 
 	p.filesInTransmission.mu.Unlock()
@@ -497,23 +496,76 @@ func (p *peer) download(filename, checksum string) (string, error) {
 
 			p.filesToShare.mu.Unlock()
 			return fmt.Sprintf("%s %q", downloadCompletedFor, filename), nil
-		case query := <-downloadProgressQueryChan:
-			// forward the query from outside to func downloadFile()
-			progressQueryChan <- query
-			response := <-progressQueryChan
-			downloadProgressQueryChan <- response
 		case <-cancelDownloadChan:
+			cancel()
+			<-resultChan
 			p.filesInTransmission.mu.Lock()
 
 			delete(p.filesInTransmission.files, file)
 			delete(p.filesInTransmission.jobControls, file)
 
 			p.filesInTransmission.mu.Unlock()
-			return "", fmt.Errorf("%s", downloadCanceledByUser)
+			return fmt.Sprintf("%s %q", downloadCanceledFor, filename), nil
 		case pause := <-pauseDownloadChan:
 			pauseChan <- pause
 		}
 	}
+}
+
+func (p *peer) showDownloads() (string, error) {
+	p.filesInTransmission.mu.Lock()
+	defer p.filesInTransmission.mu.Unlock()
+
+	if len(p.filesInTransmission.files) == 0 {
+		return fmt.Sprintf("%s", noFileIsBeingDownloaded), nil
+	}
+
+	type downloadProgress struct {
+		FileName              string
+		Checksum              string
+		CompletedChunkIndexes string
+	}
+
+	progresses := make([]downloadProgress, 0)
+	for id, file := range p.filesInTransmission.files {
+		indexes := make([]int, 0)
+		for index := range file.completedChunksByIndex {
+			indexes = append(indexes, index)
+		}
+		sort.Ints(indexes)
+		progresses = append(progresses, downloadProgress{
+			FileName:              id.name,
+			Checksum:              id.checksum,
+			CompletedChunkIndexes: strings.Join(strings.Fields(fmt.Sprint(indexes)), ", "),
+		})
+
+	}
+
+	var builder strings.Builder
+	for _, p := range progresses {
+		builder.WriteString(fmt.Sprintf("%s\n", util.StructToPrettyString(p)))
+	}
+	return builder.String(), nil
+}
+
+func (p *peer) cancelDownload(filename, checksum string) (string, error) {
+	if len(checksum) != util.Sha256ChecksumHexStringSize {
+		return "", fmt.Errorf("%s", util.BadSha256ChecksumHexStringSize)
+	}
+
+	p.filesInTransmission.mu.Lock()
+	defer p.filesInTransmission.mu.Unlock()
+
+	control, ok := p.filesInTransmission.jobControls[fileID{
+		name:     filename,
+		checksum: checksum,
+	}]
+	if !ok {
+		return "", fmt.Errorf("%s", noSuchFileIsBeingDownloaded)
+	}
+
+	control.cancel <- struct{}{}
+	return fmt.Sprintf("%s %q", cancelingDownloadFor, filename), nil
 }
 
 func findFile(p *peer, file fileID) (*communication.FindFileResponse, error) {
@@ -573,7 +625,7 @@ func findFile(p *peer, file fileID) (*communication.FindFileResponse, error) {
 }
 
 func downloadFile(ctx context.Context, p *peer, file fileID,
-	result chan<- fileDownloadResult, progressQuery chan fileDownloadProgressQuery, pauseDownload <-chan bool) {
+	result chan<- fileDownloadResult, pauseDownload <-chan bool) {
 	resp, err := findFile(p, file)
 	if err != nil {
 		result <- fileDownloadResult{
@@ -623,10 +675,14 @@ func downloadFile(ctx context.Context, p *peer, file fileID,
 		workerCount = totalChunkCount
 	}
 
+	var wg sync.WaitGroup
 	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
 		i := i
 		go func(ctx context.Context, toDownload <-chan toBeDownloadedChunk, result chan<- chunkDownloadResult) {
 			infoLogger.Printf("download worker %d starts for %q", i, file.name)
+			defer wg.Done()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -666,18 +722,35 @@ func downloadFile(ctx context.Context, p *peer, file fileID,
 
 	for {
 		select {
+		// download needs to be canceled
 		case <-ctx.Done():
+			c := make(chan struct{})
+			// this func is to unblock all the chunk download goroutines so that they can be canceled by ctx
+			go func() {
+				for {
+					select {
+					case <-c:
+						return
+					case <-chunkDownloadResultChan:
+						// receive from the channel and discard
+					}
+				}
+			}()
+
+			// wait for every chunk download goroutine to return
+			wg.Wait()
+			// when every chunk download goroutine is done, tell the "unblock" goroutine above to return
+			c <- struct{}{}
+
+			//close result to show we canceled the download
+			close(result)
 			return
+		// download needs to be paused
 		case paused = <-pauseDownload:
 			if paused == true {
 				infoLogger.Printf("%s %q", downloadingPausedFor, file.name)
 			} else {
 				infoLogger.Printf("%s %q", downloadingResumedFor, file.name)
-			}
-		case <-progressQuery:
-			progressQuery <- fileDownloadProgressQuery{
-				completedChunksByIndex:      completedChunksByIndex,
-				inTransmissionChunksByIndex: inTransmissionChunksByIndex,
 			}
 		default:
 			if paused == true {
@@ -685,6 +758,7 @@ func downloadFile(ctx context.Context, p *peer, file fileID,
 			}
 
 			select {
+			// a chunk download goroutine produces a new result
 			case r := <-chunkDownloadResultChan:
 				// remove chunk from in transmission set
 				delete(inTransmissionChunksByIndex, r.index)
@@ -740,9 +814,6 @@ func downloadFile(ctx context.Context, p *peer, file fileID,
 
 				// if whole file download completed
 				if len(completedChunksByIndex) == totalChunkCount {
-					time.Sleep(time.Second * 10000)
-					// no need of p.filesInTransmission.mu.Lock() to use fp since write only occurs above,
-					// which is in the same goroutine as here
 					checksumToVerify, err := util.Sha256FileChecksum(fp)
 					if err != nil {
 						result <- fileDownloadResult{
@@ -780,6 +851,7 @@ func downloadFile(ctx context.Context, p *peer, file fileID,
 				}
 				toDownloadChunkChan <- *picked
 				inTransmissionChunksByIndex[picked.index] = struct{}{}
+			// update chunkLocations periodically
 			case <-chunkLocationsUpdateTicker.C:
 				resp, err := findFile(p, file)
 				if err != nil {

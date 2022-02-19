@@ -10,14 +10,17 @@ import (
 const (
 	parallelDownloadWorkerCount = 10
 
-	registerCmd = "register"
-	listCmd     = "list"
-	findCmd     = "find"
-	downloadCmd = "download"
-	hCmd        = "h"
-	helpCmd     = "help"
-	qCmd        = "q"
-	quitCmd     = "quit"
+	registerCmd       = "register"
+	listCmd           = "list"
+	findCmd           = "find"
+	downloadCmd       = "download"
+	showDownloadsCmd  = "showDownloads"
+	cancelDownloadCmd = "cancelDownload"
+
+	hCmd    = "h"
+	helpCmd = "help"
+	qCmd    = "q"
+	quitCmd = "quit"
 
 	alreadyUsingTrackerAt                     = "already using tracker ip:port at"
 	alreadyUsingSelfHostPortAt                = "already using self ip:port at"
@@ -26,9 +29,10 @@ const (
 	beginDownloading                          = "begin downloading"
 	badPeerResponse                           = "bad peer response"
 	badTrackerResponse                        = "bad tracker response"
+	cancelingDownloadFor                      = "canceling download for"
 	chunkDoesNotExist                         = "chunk does not exist"
 	chunkIsFound                              = "chunk is found"
-	downloadCanceledByUser                    = "download canceled by user"
+	downloadCanceledFor                       = "download canceled for"
 	downloadCompletedFor                      = "download completed for"
 	downloadedChunkIndexMismatch              = "downloaded chunk index mismatch"
 	downloadedChunkChecksumMismatch           = "downloaded chunk checksum mismatch"
@@ -41,6 +45,8 @@ const (
 	ignoreFailedUpdateToChunkLocations        = "ignore failed update to chunk locations"
 	inTheBackground                           = "in the background"
 	noFileIsAvailableRightNow                 = "no file is available right now"
+	noSuchFileIsBeingDownloaded               = "no such file is being downloaded"
+	noFileIsBeingDownloaded                   = "no file is being downloaded"
 	pleaseRegisterFirst                       = "please " + registerCmd + " first"
 	registeredFilesAre                        = "registered file(s) are"
 	startToServeFilesToPeers                  = "start to serve files to peers"
@@ -56,6 +62,8 @@ var helpMessage = strings.Join([]string{
 	fmt.Sprintf("\t%s", listCmd),
 	fmt.Sprintf("\t%s [filename] [sha256 checksum]", findCmd),
 	fmt.Sprintf("\t%s [filename] [sha256 checksum]", downloadCmd),
+	fmt.Sprintf("\t%s", showDownloadsCmd),
+	fmt.Sprintf("\t%s [filename] [sha256 checksum]", cancelDownloadCmd),
 	fmt.Sprintf("\t%s, %s", quitCmd, qCmd),
 }, "\n")
 
