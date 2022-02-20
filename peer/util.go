@@ -1,8 +1,11 @@
 package peer
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"os"
@@ -10,9 +13,9 @@ import (
 	"time"
 
 	"Lab1/communication"
-	"Lab1/util"
 )
 
+// localFilesToP2PFiles converts map[fileID]localFile to []communication.P2PFile
 func localFilesToP2PFiles(localFiles map[fileID]localFile) []communication.P2PFile {
 	var p2pFiles []communication.P2PFile
 	for _, file := range localFiles {
@@ -25,20 +28,7 @@ func localFilesToP2PFiles(localFiles map[fileID]localFile) []communication.P2PFi
 	return p2pFiles
 }
 
-func validatePeerPeerHeader(received, sent communication.PeerPeerHeader) error {
-	if received != sent {
-		return fmt.Errorf("%s", badPeerResponse)
-	}
-	return nil
-}
-
-func validatePeerTrackerHeader(received, sent communication.PeerTrackerHeader) error {
-	if received != sent {
-		return fmt.Errorf("%s", badTrackerResponse)
-	}
-	return nil
-}
-
+// makeFailedOperationResponse makes a failed response
 // the []byte return value has been encoded into a raw json message
 func makeFailedOperationResponse(header communication.PeerPeerHeader, e error) []byte {
 	result := communication.OperationResult{
@@ -70,7 +60,7 @@ func makeFailedOperationResponse(header communication.PeerPeerHeader, e error) [
 	return resp
 }
 
-// makeLocalFiles returns a map from fileID to localFile
+// makeLocalFiles converts local filepaths to a map[fileID]localFile
 func makeLocalFiles(filepaths []string) (map[fileID]localFile, error) {
 	files := make(map[fileID]localFile)
 	for _, fullPath := range filepaths {
@@ -79,7 +69,7 @@ func makeLocalFiles(filepaths []string) (map[fileID]localFile, error) {
 			return nil, err
 		}
 
-		checksum, err := util.Sha256FileChecksum(f)
+		checksum, err := sha256FileChecksum(f)
 		if err != nil {
 			_ = f.Close()
 			return nil, err
@@ -143,6 +133,45 @@ func pickChunk(locations communication.ChunkLocations, excludedChunksByIndex map
 	}
 }
 
+// sha256FileChecksum computes sha256 of the file. It assumes f is not nil.
+func sha256FileChecksum(f *os.File) (string, error) {
+	buffer := make([]byte, 100*1024*1024)
+
+	hash := sha256.New()
+	for {
+		n, err := f.Read(buffer)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return "", err
+		}
+
+		if _, err := hash.Write(buffer[:n]); err != nil {
+			return "", err
+		}
+	}
+
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// validatePeerPeerHeader compares 2 communication.PeerPeerHeader
+func validatePeerPeerHeader(received, sent communication.PeerPeerHeader) error {
+	if received != sent {
+		return fmt.Errorf("%s", badPeerResponse)
+	}
+	return nil
+}
+
+// validatePeerTrackerHeader compares 2 communication.PeerTrackerHeader
+func validatePeerTrackerHeader(received, sent communication.PeerTrackerHeader) error {
+	if received != sent {
+		return fmt.Errorf("%s", badTrackerResponse)
+	}
+	return nil
+}
+
+// writeChunk writes a chunk to the file
 func writeChunk(f *os.File, chunkIndex int, data []byte) error {
 	offset := chunkIndex * communication.ChunkSize
 	if _, err := f.WriteAt(data, int64(offset)); err != nil {

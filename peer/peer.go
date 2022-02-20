@@ -22,28 +22,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type localFile struct {
-	name     string
-	fullPath string
-	checksum string
-	size     int64
-}
-
-type partiallyDownloadedFile struct {
-	fp                     *os.File
-	completedChunksByIndex map[int]struct{}
-}
-
-type fileID struct {
-	name     string
-	checksum string
-}
-
-type toBeDownloadedChunk struct {
-	index    int
-	hostPort string
-}
-
 type chunkDownloadResult struct {
 	error    error
 	hostPort string
@@ -51,9 +29,19 @@ type chunkDownloadResult struct {
 	data     []byte
 }
 
+type fileDownloadJobControl struct {
+	cancel chan<- struct{}
+	pause  chan<- bool
+}
+
 type fileDownloadResult struct {
 	error error
 	f     localFile
+}
+
+type fileID struct {
+	name     string
+	checksum string
 }
 
 type filesInTransmission struct {
@@ -71,9 +59,16 @@ type filesToShare struct {
 	mu sync.Mutex
 }
 
-type fileDownloadJobControl struct {
-	cancel chan<- struct{}
-	pause  chan<- bool
+type localFile struct {
+	name     string
+	fullPath string
+	checksum string
+	size     int64
+}
+
+type partiallyDownloadedFile struct {
+	fp                     *os.File
+	completedChunksByIndex map[int]struct{}
 }
 
 type peer struct {
@@ -85,6 +80,19 @@ type peer struct {
 	filesToShare        filesToShare
 	filesInTransmission filesInTransmission
 }
+
+type toBeDownloadedChunk struct {
+	index    int
+	hostPort string
+}
+
+type fileDownloadControlOp int
+
+const (
+	pauseDownloadOp  fileDownloadControlOp = 0
+	resumeDownloadOp fileDownloadControlOp = 1
+	cancelDownloadOp fileDownloadControlOp = 2
+)
 
 var (
 	self peer
@@ -173,13 +181,24 @@ func Start() {
 					break
 				}
 				result, err = self.showDownloads()
+			case pauseDownloadCmd:
+				if len(args) != 3 {
+					err = fmt.Errorf("%s. %s", badArguments, helpPrompt)
+					break
+				}
+				result, err = self.pauseDownload(args[1], args[2])
+			case resumeDownloadCmd:
+				if len(args) != 3 {
+					err = fmt.Errorf("%s. %s", badArguments, helpPrompt)
+					break
+				}
+				result, err = self.resumeDownload(args[1], args[2])
 			case cancelDownloadCmd:
 				if len(args) != 3 {
 					err = fmt.Errorf("%s. %s", badArguments, helpPrompt)
 					break
 				}
 				result, err = self.cancelDownload(args[1], args[2])
-				//todo pauseDownload
 			case hCmd:
 				fallthrough
 			case helpCmd:
@@ -297,7 +316,7 @@ func (p *peer) register(trackerHostPort, selfHostPort string, filepaths []string
 		if registeredFiles != nil {
 			builder.WriteString(fmt.Sprintf("%s:\n", registeredFilesAre))
 			for _, f := range registeredFiles {
-				builder.WriteString(fmt.Sprintf("%s\n", util.StructToPrettyString(f)))
+				builder.WriteString(fmt.Sprintf("%s\n", util.StructToPrettyJsonString(f)))
 			}
 		}
 		result = builder.String()
@@ -323,6 +342,7 @@ func (p *peer) register(trackerHostPort, selfHostPort string, filepaths []string
 	return result, nil
 }
 
+// list lists the available files in the tracker
 func (p *peer) list() (string, error) {
 	if p.registered == false {
 		return "", fmt.Errorf("%s", pleaseRegisterFirst)
@@ -376,7 +396,7 @@ func (p *peer) list() (string, error) {
 			})
 			builder.WriteString(fmt.Sprintf("%s:\n", availableFilesAre))
 			for _, f := range files {
-				builder.WriteString(fmt.Sprintf("%s\n", util.StructToPrettyString(f)))
+				builder.WriteString(fmt.Sprintf("%s\n", util.StructToPrettyJsonString(f)))
 			}
 		} else {
 			builder.WriteString(fmt.Sprintf("%s", noFileIsAvailableRightNow))
@@ -389,13 +409,14 @@ func (p *peer) list() (string, error) {
 	}
 }
 
+// find finds the information of a file from the tracker
 func (p *peer) find(filename, checksum string) (string, error) {
 	if p.registered == false {
 		return "", fmt.Errorf("%s", pleaseRegisterFirst)
 	}
 
-	if len(checksum) != util.Sha256ChecksumHexStringSize {
-		return "", fmt.Errorf("%s", util.BadSha256ChecksumHexStringSize)
+	if len(checksum) != sha256ChecksumHexStringSize {
+		return "", fmt.Errorf("%s", badSha256ChecksumHexStringSize)
 	}
 
 	resp, err := findFile(p, fileID{
@@ -420,13 +441,14 @@ func (p *peer) find(filename, checksum string) (string, error) {
 	return builder.String(), nil
 }
 
+// download downloads a file from a peer
 func (p *peer) download(filename, checksum string) (string, error) {
 	if p.registered == false {
 		return "", fmt.Errorf("%s", pleaseRegisterFirst)
 	}
 
-	if len(checksum) != util.Sha256ChecksumHexStringSize {
-		return "", fmt.Errorf("%s", util.BadSha256ChecksumHexStringSize)
+	if len(checksum) != sha256ChecksumHexStringSize {
+		return "", fmt.Errorf("%s", badSha256ChecksumHexStringSize)
 	}
 
 	infoLogger.Printf("%s %q %s", beginDownloading, filename, inTheBackground)
@@ -512,6 +534,7 @@ func (p *peer) download(filename, checksum string) (string, error) {
 	}
 }
 
+// showDownloads shows what files are being downloaded right now
 func (p *peer) showDownloads() (string, error) {
 	p.filesInTransmission.mu.Lock()
 	defer p.filesInTransmission.mu.Unlock()
@@ -543,14 +566,30 @@ func (p *peer) showDownloads() (string, error) {
 
 	var builder strings.Builder
 	for _, p := range progresses {
-		builder.WriteString(fmt.Sprintf("%s\n", util.StructToPrettyString(p)))
+		builder.WriteString(fmt.Sprintf("%s\n", util.StructToPrettyJsonString(p)))
 	}
 	return builder.String(), nil
 }
 
+//pauseDownload pauses the downloading of a file
+func (p *peer) pauseDownload(filename, checksum string) (string, error) {
+	return controlDownload(p, filename, checksum, pauseDownloadOp)
+}
+
+//resumeDownload resumes the downloading of a file
+func (p *peer) resumeDownload(filename, checksum string) (string, error) {
+	return controlDownload(p, filename, checksum, resumeDownloadOp)
+}
+
+//cancelDownload cancels the downloading of a file
 func (p *peer) cancelDownload(filename, checksum string) (string, error) {
-	if len(checksum) != util.Sha256ChecksumHexStringSize {
-		return "", fmt.Errorf("%s", util.BadSha256ChecksumHexStringSize)
+	return controlDownload(p, filename, checksum, cancelDownloadOp)
+}
+
+// controlDownload controls the downloading of a file according to fileDownloadControlOp
+func controlDownload(p *peer, filename, checksum string, op fileDownloadControlOp) (string, error) {
+	if len(checksum) != sha256ChecksumHexStringSize {
+		return "", fmt.Errorf("%s", badSha256ChecksumHexStringSize)
 	}
 
 	p.filesInTransmission.mu.Lock()
@@ -564,14 +603,26 @@ func (p *peer) cancelDownload(filename, checksum string) (string, error) {
 		return "", fmt.Errorf("%s", noSuchFileIsBeingDownloaded)
 	}
 
-	control.cancel <- struct{}{}
-	return fmt.Sprintf("%s %q", cancelingDownloadFor, filename), nil
+	switch op {
+	case pauseDownloadOp:
+		control.pause <- true
+		return fmt.Sprintf("%s %q", pausingDownloadFor, filename), nil
+	case resumeDownloadOp:
+		control.pause <- false
+		return fmt.Sprintf("%s %q", resumingDownloadFor, filename), nil
+	case cancelDownloadOp:
+		control.cancel <- struct{}{}
+		return fmt.Sprintf("%s %q", cancelingDownloadFor, filename), nil
+	default:
+		return "", fmt.Errorf("%s", unsupportedFileDownloadControlOp)
+	}
 }
 
+// findFile finds the information of a file from the tracker
 func findFile(p *peer, file fileID) (*communication.FindFileResponse, error) {
 	checksum := file.checksum
-	if len(checksum) != util.Sha256ChecksumHexStringSize {
-		return nil, fmt.Errorf("%s", util.BadSha256ChecksumHexStringSize)
+	if len(checksum) != sha256ChecksumHexStringSize {
+		return nil, fmt.Errorf("%s", badSha256ChecksumHexStringSize)
 	}
 
 	requestId := uuid.NewString()
@@ -624,6 +675,7 @@ func findFile(p *peer, file fileID) (*communication.FindFileResponse, error) {
 	}
 }
 
+// downloadFile downloads a file from peers and validates the file checksum
 func downloadFile(ctx context.Context, p *peer, file fileID,
 	result chan<- fileDownloadResult, pauseDownload <-chan bool) {
 	resp, err := findFile(p, file)
@@ -814,7 +866,7 @@ func downloadFile(ctx context.Context, p *peer, file fileID,
 
 				// if whole file download completed
 				if len(completedChunksByIndex) == totalChunkCount {
-					checksumToVerify, err := util.Sha256FileChecksum(fp)
+					checksumToVerify, err := sha256FileChecksum(fp)
 					if err != nil {
 						result <- fileDownloadResult{
 							error: err,
@@ -864,7 +916,7 @@ func downloadFile(ctx context.Context, p *peer, file fileID,
 	}
 }
 
-// downloadChunk downloads a chunk from a peer and validates the checksum
+// downloadChunk downloads a chunk from a peer and validates the chunk checksum
 func downloadChunk(file fileID, c toBeDownloadedChunk) ([]byte, error) {
 	requestId := uuid.NewString()
 	req, _ := json.Marshal(communication.DownloadChunkRequest{
@@ -987,6 +1039,7 @@ func registerChunk(p *peer, file fileID, chunkIndex int) error {
 	return nil
 }
 
+// serveFiles serves local files to peers
 func serveFiles(p *peer, l net.Listener) {
 	infoLogger.Printf("%s", startToServeFilesToPeers)
 
@@ -1057,6 +1110,7 @@ func serveFiles(p *peer, l net.Listener) {
 	}
 }
 
+// getChunk gets a chunk from local files
 func getChunk(p *peer, id fileID, chunkIndex int, chunkSize int) ([]byte, error) {
 	data := make([]byte, chunkSize)
 

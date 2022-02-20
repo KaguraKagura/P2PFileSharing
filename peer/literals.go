@@ -9,23 +9,26 @@ import (
 
 const (
 	parallelDownloadWorkerCount = 10
+	sha256ChecksumHexStringSize = 64
 
 	registerCmd       = "register"
 	listCmd           = "list"
 	findCmd           = "find"
 	downloadCmd       = "download"
 	showDownloadsCmd  = "showDownloads"
+	pauseDownloadCmd  = "pauseDownload"
+	resumeDownloadCmd = "resumeDownload"
 	cancelDownloadCmd = "cancelDownload"
-
-	hCmd    = "h"
-	helpCmd = "help"
-	qCmd    = "q"
-	quitCmd = "quit"
+	hCmd              = "h"
+	helpCmd           = "help"
+	qCmd              = "q"
+	quitCmd           = "quit"
 
 	alreadyUsingTrackerAt                     = "already using tracker ip:port at"
 	alreadyUsingSelfHostPortAt                = "already using self ip:port at"
 	availableFilesAre                         = "available files are"
 	badArguments                              = "bad arguments"
+	badSha256ChecksumHexStringSize            = "bad sha256 checksum hex string size"
 	beginDownloading                          = "begin downloading"
 	badPeerResponse                           = "bad peer response"
 	badTrackerResponse                        = "bad tracker response"
@@ -45,15 +48,18 @@ const (
 	ignoreFailedUpdateToChunkLocations        = "ignore failed update to chunk locations"
 	inTheBackground                           = "in the background"
 	noFileIsAvailableRightNow                 = "no file is available right now"
-	noSuchFileIsBeingDownloaded               = "no such file is being downloaded"
 	noFileIsBeingDownloaded                   = "no file is being downloaded"
+	noSuchFileIsBeingDownloaded               = "no such file is being downloaded"
+	pausingDownloadFor                        = "pausing download for"
 	pleaseRegisterFirst                       = "please " + registerCmd + " first"
 	registeredFilesAre                        = "registered file(s) are"
+	resumingDownloadFor                       = "resuming download for"
 	startToServeFilesToPeers                  = "start to serve files to peers"
 	unrecognizedCommand                       = "unrecognized command"
 	unrecognizedPeerPeerOperation             = "unrecognized peer peer operation"
 	unrecognizedPeerPeerResponseResultCode    = "unrecognized peer peer response result code"
 	unrecognizedPeerTrackerResponseResultCode = "unrecognized peer tracker response result code"
+	unsupportedFileDownloadControlOp          = "unsupported file download control op"
 	writeChunkFailsFor                        = "write chunk fails for"
 )
 
@@ -63,6 +69,8 @@ var helpMessage = strings.Join([]string{
 	fmt.Sprintf("\t%s [filename] [sha256 checksum]", findCmd),
 	fmt.Sprintf("\t%s [filename] [sha256 checksum]", downloadCmd),
 	fmt.Sprintf("\t%s", showDownloadsCmd),
+	fmt.Sprintf("\t%s [filename] [sha256 checksum]", pauseDownloadCmd),
+	fmt.Sprintf("\t%s [filename] [sha256 checksum]", resumeDownloadCmd),
 	fmt.Sprintf("\t%s [filename] [sha256 checksum]", cancelDownloadCmd),
 	fmt.Sprintf("\t%s, %s", quitCmd, qCmd),
 }, "\n")

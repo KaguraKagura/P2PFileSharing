@@ -15,13 +15,12 @@ const (
 	Fail    = "fail"
 )
 
-// ChunkLocations for each (chunk) index is a set of host:port containing the chunk
+// ChunkLocations for each (chunk) index is a set of string in the form of "host:port" having the chunk
 type ChunkLocations []map[string]struct{}
+
 type OperationResultCode string
 type PeerPeerOperation string
 type PeerTrackerOperation string
-
-// general
 
 type P2PFile struct {
 	Name     string
@@ -35,13 +34,16 @@ type P2PChunk struct {
 	ChunkIndex   int
 }
 
-type GenericPeerPeerResponse struct {
-	Header PeerPeerHeader
-	Body   GenericPeerPeerResponseBody
+type OperationResult struct {
+	Code   OperationResultCode
+	Detail string
 }
 
-type GenericPeerPeerResponseBody struct {
-	Result OperationResult
+// structs for PeerTrackerOperation
+
+type PeerTrackerHeader struct {
+	RequestId string
+	Operation PeerTrackerOperation
 }
 
 type GenericPeerTrackerResponse struct {
@@ -52,23 +54,6 @@ type GenericPeerTrackerResponse struct {
 type GenericPeerTrackerResponseBody struct {
 	Result OperationResult
 }
-
-type OperationResult struct {
-	Code   OperationResultCode
-	Detail string
-}
-
-type PeerPeerHeader struct {
-	RequestId string
-	Operation PeerPeerOperation
-}
-
-type PeerTrackerHeader struct {
-	RequestId string
-	Operation PeerTrackerOperation
-}
-
-// PeerTrackerOperation
 
 type FindFileRequest struct {
 	Header PeerTrackerHeader
@@ -102,8 +87,7 @@ type ListFileResponse struct {
 	Body   ListFileResponseBody
 }
 
-type ListFileRequestBody struct {
-}
+type ListFileRequestBody struct{}
 
 type ListFileResponseBody struct {
 	Result OperationResult
@@ -150,7 +134,21 @@ type RegisterFileResponseBody struct {
 	RegisteredFiles []P2PFile
 }
 
-// PeerPeerOperations
+// structs for PeerPeerOperations
+
+type PeerPeerHeader struct {
+	RequestId string
+	Operation PeerPeerOperation
+}
+
+type GenericPeerPeerResponse struct {
+	Header PeerPeerHeader
+	Body   GenericPeerPeerResponseBody
+}
+
+type GenericPeerPeerResponseBody struct {
+	Result OperationResult
+}
 
 type DownloadChunkRequest struct {
 	Header PeerPeerHeader

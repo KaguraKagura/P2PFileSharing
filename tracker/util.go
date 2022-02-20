@@ -6,11 +6,7 @@ import (
 	"Lab1/communication"
 )
 
-type genericRequest struct {
-	Header communication.PeerTrackerHeader
-	Body   json.RawMessage
-}
-
+// makeFailedOperationResponse makes a failed response
 // the []byte return value has been encoded into a raw json message
 func makeFailedOperationResponse(header communication.PeerTrackerHeader, e error) []byte {
 	result := communication.OperationResult{

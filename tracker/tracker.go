@@ -14,9 +14,9 @@ import (
 	"Lab1/util"
 )
 
-type remoteFile struct {
-	name     string
-	checksum string
+type genericRequest struct {
+	Header communication.PeerTrackerHeader
+	Body   json.RawMessage
 }
 
 type p2pFileStatus struct {
@@ -27,6 +27,11 @@ type p2pFileStatus struct {
 type p2pFileLocations struct {
 	locations map[remoteFile]p2pFileStatus
 	mu        sync.Mutex
+}
+
+type remoteFile struct {
+	name     string
+	checksum string
 }
 
 type tracker struct {
@@ -96,6 +101,7 @@ func Start() {
 	os.Exit(0)
 }
 
+// start starts the tracker server
 func (t *tracker) start(hostPort string) error {
 	if t.listening == true {
 		return fmt.Errorf("%s %s", trackerAlreadyRunningAt, t.hostPort)
@@ -116,7 +122,7 @@ func (t *tracker) start(hostPort string) error {
 
 	infoLogger.Printf("%s %s", trackerOnlineListeningOn, hostPort)
 
-	// start serving requests
+	// start to listen and serve
 	go func() {
 		for {
 			conn, err := l.Accept()
@@ -208,7 +214,7 @@ func (t *tracker) start(hostPort string) error {
 // the []byte return value has been encoded into a raw json message
 func (t *tracker) handleRegisterChunk(req communication.RegisterChunkRequest) ([]byte, error) {
 	infoLogger.Printf("%s:", handlingRequest)
-	genericLogger.Printf("%s", util.StructToPrettyString(req))
+	genericLogger.Printf("%s", util.StructToPrettyJsonString(req))
 
 	file := remoteFile{
 		name:     req.Body.Chunk.FileName,
@@ -247,7 +253,7 @@ func (t *tracker) handleRegisterChunk(req communication.RegisterChunkRequest) ([
 // the []byte return value has been encoded into a raw json message
 func (t *tracker) handleRegisterFile(req communication.RegisterFileRequest) ([]byte, error) {
 	infoLogger.Printf("%s:", handlingRequest)
-	genericLogger.Printf("%s", util.StructToPrettyString(req))
+	genericLogger.Printf("%s", util.StructToPrettyJsonString(req))
 
 	b := req.Body
 
@@ -297,9 +303,11 @@ func (t *tracker) handleRegisterFile(req communication.RegisterFileRequest) ([]b
 	return resp, nil
 }
 
+// handleList returns a valid response and nil if the request is successfully served else returns nil and error
+// the []byte return value has been encoded into a raw json message
 func (t *tracker) handleList(req communication.ListFileRequest) ([]byte, error) {
 	infoLogger.Printf("%s:", handlingRequest)
-	genericLogger.Printf("%s", util.StructToPrettyString(req))
+	genericLogger.Printf("%s", util.StructToPrettyJsonString(req))
 
 	t.p2pFileLocations.mu.Lock()
 	defer t.p2pFileLocations.mu.Unlock()
@@ -327,9 +335,11 @@ func (t *tracker) handleList(req communication.ListFileRequest) ([]byte, error) 
 	return resp, nil
 }
 
+// handleFind returns a valid response and nil if the request is successfully served else returns nil and error
+// the []byte return value has been encoded into a raw json message
 func (t *tracker) handleFind(req communication.FindFileRequest) ([]byte, error) {
 	infoLogger.Printf("%s:", handlingRequest)
-	genericLogger.Printf("%s", util.StructToPrettyString(req))
+	genericLogger.Printf("%s", util.StructToPrettyJsonString(req))
 
 	t.p2pFileLocations.mu.Lock()
 	defer t.p2pFileLocations.mu.Unlock()
