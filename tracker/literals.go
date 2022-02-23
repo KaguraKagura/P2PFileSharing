@@ -31,6 +31,7 @@ const (
 var helpMessage = strings.Join([]string{
 	fmt.Sprintf("\t%s [ip:port to listen]", startCmd),
 	fmt.Sprintf("\t%s, %s", quitCmd, qCmd),
+	fmt.Sprintf("\t%s, %s", helpCmd, hCmd),
 }, "\n")
 
 var helpPrompt = fmt.Sprintf("Type %q or %q to see command usages", helpCmd, hCmd)

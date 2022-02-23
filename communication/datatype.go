@@ -17,7 +17,6 @@ const (
 
 // ChunkLocations for each (chunk) index is a set of string in the form of "host:port" having the chunk
 type ChunkLocations []map[string]struct{}
-
 type OperationResultCode string
 type PeerPeerOperation string
 type PeerTrackerOperation string

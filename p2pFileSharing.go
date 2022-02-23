@@ -15,12 +15,12 @@ import (
 func main() {
 	app := cli.App{
 		Name:      util.AppName,
-		Usage:     "a p2p file sharing system consisting of peers and a central tracker",
+		Usage:     "a p2p file sharing system consisting of a tracker and multiple peers",
 		UsageText: fmt.Sprintf("%s command", util.AppName),
 		Commands: []*cli.Command{
 			{
 				Name:  "peer",
-				Usage: "use the p2p network as a peer",
+				Usage: "Run in peer mode",
 				Action: func(context *cli.Context) error {
 					peer.Start()
 					return nil
@@ -28,7 +28,7 @@ func main() {
 			},
 			{
 				Name:  "tracker",
-				Usage: "start the central tracker of a p2p network",
+				Usage: "Run in tracker mode",
 				Action: func(context *cli.Context) error {
 					tracker.Start()
 					return nil

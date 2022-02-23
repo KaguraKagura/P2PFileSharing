@@ -73,6 +73,7 @@ var helpMessage = strings.Join([]string{
 	fmt.Sprintf("\t%s [filename] [sha256 checksum]", resumeDownloadCmd),
 	fmt.Sprintf("\t%s [filename] [sha256 checksum]", cancelDownloadCmd),
 	fmt.Sprintf("\t%s, %s", quitCmd, qCmd),
+	fmt.Sprintf("\t%s, %s", helpCmd, hCmd),
 }, "\n")
 
 var helpPrompt = fmt.Sprintf("Type %q or %q to see command usages", helpCmd, hCmd)

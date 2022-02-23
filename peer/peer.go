@@ -69,6 +69,7 @@ type localFile struct {
 type partiallyDownloadedFile struct {
 	fp                     *os.File
 	completedChunksByIndex map[int]struct{}
+	paused                 bool
 }
 
 type peer struct {
@@ -480,6 +481,7 @@ func (p *peer) download(filename, checksum string) (string, error) {
 	p.filesInTransmission.files[file] = &partiallyDownloadedFile{
 		fp:                     nil,
 		completedChunksByIndex: make(map[int]struct{}),
+		paused:                 false,
 	}
 
 	// next 2 channels are accessible to outside functions to query download progress
@@ -547,6 +549,7 @@ func (p *peer) showDownloads() (string, error) {
 		FileName              string
 		Checksum              string
 		CompletedChunkIndexes string
+		Paused                bool
 	}
 
 	progresses := make([]downloadProgress, 0)
@@ -560,6 +563,7 @@ func (p *peer) showDownloads() (string, error) {
 			FileName:              id.name,
 			Checksum:              id.checksum,
 			CompletedChunkIndexes: strings.Join(strings.Fields(fmt.Sprint(indexes)), ", "),
+			Paused:                file.paused,
 		})
 
 	}
@@ -799,6 +803,12 @@ func downloadFile(ctx context.Context, p *peer, file fileID,
 			return
 		// download needs to be paused
 		case paused = <-pauseDownload:
+			p.filesInTransmission.mu.Lock()
+
+			p.filesInTransmission.files[file].paused = paused
+
+			p.filesInTransmission.mu.Unlock()
+
 			if paused == true {
 				infoLogger.Printf("%s %q", downloadingPausedFor, file.name)
 			} else {
