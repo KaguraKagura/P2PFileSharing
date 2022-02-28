@@ -331,7 +331,7 @@ func (p *peer) register(trackerHostPort, selfHostPort string, filepaths []string
 		return "", e
 	}
 
-	if p.servingFiles == false {
+	if !p.servingFiles {
 		l, err := net.Listen("tcp", selfHostPort)
 		if err != nil {
 			return "", err
@@ -345,7 +345,7 @@ func (p *peer) register(trackerHostPort, selfHostPort string, filepaths []string
 
 // list lists the available files in the tracker
 func (p *peer) list() (string, error) {
-	if p.registered == false {
+	if !p.registered {
 		return "", fmt.Errorf("%s", pleaseRegisterFirst)
 	}
 
@@ -400,7 +400,7 @@ func (p *peer) list() (string, error) {
 				builder.WriteString(fmt.Sprintf("%s\n", util.StructToPrettyJsonString(f)))
 			}
 		} else {
-			builder.WriteString(fmt.Sprintf("%s", noFileIsAvailableRightNow))
+			builder.WriteString(noFileIsAvailableRightNow)
 		}
 		return builder.String(), nil
 	case communication.Fail:
@@ -412,7 +412,7 @@ func (p *peer) list() (string, error) {
 
 // find finds the information of a file from the tracker
 func (p *peer) find(filename, checksum string) (string, error) {
-	if p.registered == false {
+	if !p.registered {
 		return "", fmt.Errorf("%s", pleaseRegisterFirst)
 	}
 
@@ -436,7 +436,7 @@ func (p *peer) find(filename, checksum string) (string, error) {
 		for l := range chunkLocation {
 			builder.WriteString(fmt.Sprintf("%s ", l))
 		}
-		builder.WriteString(fmt.Sprintf("\n"))
+		builder.WriteString("\n")
 	}
 
 	return builder.String(), nil
@@ -444,7 +444,7 @@ func (p *peer) find(filename, checksum string) (string, error) {
 
 // download downloads a file from a peer
 func (p *peer) download(filename, checksum string) (string, error) {
-	if p.registered == false {
+	if !p.registered {
 		return "", fmt.Errorf("%s", pleaseRegisterFirst)
 	}
 
@@ -542,7 +542,7 @@ func (p *peer) showDownloads() (string, error) {
 	defer p.filesInTransmission.mu.Unlock()
 
 	if len(p.filesInTransmission.files) == 0 {
-		return fmt.Sprintf("%s", noFileIsBeingDownloaded), nil
+		return noFileIsBeingDownloaded, nil
 	}
 
 	type downloadProgress struct {
@@ -775,6 +775,8 @@ func downloadFile(ctx context.Context, p *peer, file fileID,
 	// wait for download completion
 	paused := false
 	completedChunksByIndex := make(map[int]struct{})
+	timesFailed := 0
+	timesFailedLimit := 5
 
 	for {
 		select {
@@ -809,13 +811,13 @@ func downloadFile(ctx context.Context, p *peer, file fileID,
 
 			p.filesInTransmission.mu.Unlock()
 
-			if paused == true {
+			if paused {
 				infoLogger.Printf("%s %q", downloadingPausedFor, file.name)
 			} else {
 				infoLogger.Printf("%s %q", downloadingResumedFor, file.name)
 			}
 		default:
-			if paused == true {
+			if paused {
 				continue
 			}
 
@@ -826,10 +828,18 @@ func downloadFile(ctx context.Context, p *peer, file fileID,
 				delete(inTransmissionChunksByIndex, r.index)
 
 				if r.error != nil {
-					// discard failed chunk
-					infoLogger.Printf("%s %q chunk index %d from %q: %v",
-						failToDownload, file.name, r.index, r.hostPort, r.error)
+					timesFailed++
+					if timesFailed > timesFailedLimit {
+						result <- fileDownloadResult{
+							error: fmt.Errorf("%s %q", tooManyFailedChunksDuringDownloading, file.name),
+							f:     localFile{},
+						}
+						return
+					}
 
+					infoLogger.Printf("discard %q chunk index %d from %q: %v", file.name, r.index, r.hostPort, r.error)
+
+					// discard failed chunk implicitly
 					// give a new chunk to a chunk download goroutine
 					picked := pickChunk(chunkLocations, util.UnionIntSet(inTransmissionChunksByIndex, completedChunksByIndex))
 					toDownloadChunkChan <- *picked
@@ -1051,7 +1061,7 @@ func registerChunk(p *peer, file fileID, chunkIndex int) error {
 
 // serveFiles serves local files to peers
 func serveFiles(p *peer, l net.Listener) {
-	infoLogger.Printf("%s", startToServeFilesToPeers)
+	infoLogger.Printf("%s", readyToAcceptPeerConnections)
 
 	for {
 		conn, err := l.Accept()
