@@ -459,15 +459,6 @@ func (p *peer) download(filename, checksum string) (string, error) {
 		checksum: checksum,
 	}
 
-	// start download
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// next 2 channels are only accessible to the current function and its callee
-	resultChan := make(chan fileDownloadResult)
-	pauseChan := make(chan bool)
-	go downloadFile(ctx, p, file, resultChan, pauseChan)
-
 	// update p.filesInTransmission
 	p.filesInTransmission.mu.Lock()
 
@@ -493,6 +484,14 @@ func (p *peer) download(filename, checksum string) (string, error) {
 	}
 
 	p.filesInTransmission.mu.Unlock()
+
+	// start download
+	// next 2 channels are only accessible to the current function and its callee
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	resultChan := make(chan fileDownloadResult)
+	pauseChan := make(chan bool)
+	go downloadFile(ctx, p, file, resultChan, pauseChan)
 
 	// wait for download
 	for {
