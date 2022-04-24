@@ -121,7 +121,7 @@ In this demo, I set the chunk size to be `1` byte and use the file `a.txt`, whic
   INFO: ready to accept peer connections
   ```
 
-- On **T**, it shows a register request and a list request
+- On **T**, it shows a register request.
 
   ```
   INFO: handling request:
@@ -140,14 +140,6 @@ In this demo, I set the chunk size to be `1` byte and use the file `a.txt`, whic
                           }
                   ]
           }
-  }
-  INFO: handling request:
-  {
-          "Header": {
-                  "RequestId": "80dc0ba7-385f-4f9c-941e-05e20071c7b7",
-                  "Operation": "list"
-          },
-          "Body": {}
   }
   ```
 
@@ -176,7 +168,7 @@ In this demo, I set the chunk size to be `1` byte and use the file `a.txt`, whic
   }
   ```
 
-- On **T**, it shows a register request.
+- On **T**, it shows a register request and a list request.
 
   ```
   INFO: handling request:
@@ -189,6 +181,14 @@ In this demo, I set the chunk size to be `1` byte and use the file `a.txt`, whic
                   "HostPort": "localhost:22222",
                   "FilesToShare": null
           }
+  }
+  INFO: handling request:
+  {
+          "Header": {
+                  "RequestId": "80dc0ba7-385f-4f9c-941e-05e20071c7b7",
+                  "Operation": "list"
+          },
+          "Body": {}
   }
   ```
 
